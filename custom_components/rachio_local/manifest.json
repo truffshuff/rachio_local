@@ -1,0 +1,11 @@
+{
+    "domain": "rachio_local",
+    "name": "Rachio Local Control",
+    "documentation": "https://github.com/biofects/rachio_local",
+    "dependencies": [],
+    "codeowners": ["@biofects"],
+    "requirements": ["requests>=2.25.1"],
+    "config_flow": true,
+    "iot_class": "cloud_polling",
+    "version": "1.0.0"
+}
