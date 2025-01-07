@@ -85,13 +85,13 @@ My Home Assistant runs in Docker on a server. I don't use the supervised version
 1. Ensure [HACS](https://hacs.xyz/) is installed in your Home Assistant.
 2. Open the HACS panel, click the three dots in the top-right corner, and select **"Custom Repositories."**
 3. Add the following URL as a **Custom Repository**:  
-   [https://github.com/biofects/Enhanced-Biofects](https://github.com/biofects/rachio_local/)  
+   [https://github.com/biofects/rachio_local](https://github.com/biofects/rachio_local/)  
    and select **"Integration"** as the category.
-4. Click **"Add,"** then navigate to the **"Integration"** tab, click **"+ Explore & Download Repositories"** and search for "Rachio"
-5. Install the plugin and restart Home Assistant.
-6. Go to **settings Device and Integrations** in Home Assistant and add plugin Rachio Local.
-7. You will need to get your API Key from https://app.rach.io/
-8. Enter you API Key
+5. Click **"Add,"** then navigate to the **"Integration"** tab, click **"+ Explore & Download Repositories"** and search for "Rachio"
+6. Install the plugin and restart Home Assistant.
+7. Go to **settings Device and Integrations** in Home Assistant and add plugin Rachio Local.
+8. You will need to get your API Key from https://app.rach.io/
+9. Enter you API Key
 ---
 ## Manual installation
 1. Create plugin Folder 
