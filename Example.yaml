@@ -1,0 +1,119 @@
+views:
+  - title: Rachio Control
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: '## Irrigation Zones'
+          - square: true
+            type: grid
+            columns: 2
+            cards:
+              - show_name: true
+                show_icon: true
+                type: button
+                entity: switch.rachio_yard_schedule_watering
+                icon: mdi:sprinkler
+                name: Entire Yard
+              - show_name: true
+                show_icon: true
+                type: button
+                entity: switch.rachio_backyard_schedule_watering
+                name: Backyard
+                icon: mdi:sprinkler
+              - show_name: true
+                show_icon: true
+                type: button
+                entity: switch.rachio_frontyard_schedule_watering
+                name: Front Yard
+                icon: mdi:sprinkler
+              - show_name: true
+                show_icon: true
+                type: button
+                entity: switch.rachio_roses_schedule_watering
+                name: Roses
+                icon: mdi:sprinkler
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: '## System Status'
+          - type: entities
+            entities:
+              - entity: sensor.rachio_device_status
+                name: System Status
+          - type: markdown
+            content: >
+              ### Active Zones {% set active = namespace(zones=[]) %} {% for
+              entity in states.switch if entity.state == 'on' and 'rachio' in
+              entity.entity_id and '_watering' in entity.entity_id %}
+                {% set active.zones = active.zones + [entity.attributes.friendly_name] %}
+              {% endfor %} {% if active.zones|length > 0 %}
+                {% for zone in active.zones %}
+                * {{ zone }}
+                {% endfor %}
+              {% else %}
+                *No zones currently active*
+              {% endif %}
+          - type: entities
+            title: Last Run Times
+            show_header_toggle: false
+            entities:
+              - entity: sensor.rachio_next_to_garage_last_watered
+              - entity: sensor.rachio_back_of_garage_last_watered
+              - entity: sensor.rachio_shed_last_watered
+              - entity: sensor.rachio_back_fence_last_watered
+              - entity: sensor.rachio_back_ac_last_watered
+              - entity: sensor.rachio_front_ash_tree_last_watered
+              - entity: sensor.rachio_front_myrtle_last_watered
+              - entity: sensor.rachio_front_driveway_last_watered
+              - entity: sensor.rachio_bush_drip_last_watered
+              - entity: sensor.rachio_rose_drip_last_watered
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: '## Irrigation Zones'
+          - type: grid
+            columns: 4
+            cards:
+              - type: button
+                entity: switch.rachio_next_to_garage_watering
+                name: Side Garage
+                icon: mdi:sprinkler
+              - type: button
+                entity: switch.rachio_back_of_garage_watering
+                name: Back Garage
+                icon: mdi:sprinkler
+              - type: button
+                entity: switch.rachio_shed_watering
+                name: Shed Area
+                icon: mdi:sprinkler
+              - type: button
+                entity: switch.rachio_back_fence_watering
+                name: Back Fence
+                icon: mdi:sprinkler
+              - show_name: true
+                show_icon: true
+                type: button
+                entity: switch.rachio_back_ac_watering
+                name: Back AC
+                icon: mdi:sprinkler
+              - type: button
+                entity: switch.rachio_front_ash_tree_watering
+                name: Front Ash
+                icon: mdi:tree
+              - type: button
+                entity: switch.rachio_front_myrtle_watering
+                name: Front Myrtle
+                icon: mdi:flower
+              - type: button
+                entity: switch.rachio_front_driveway_watering
+                name: Driveway
+                icon: mdi:sprinkler
+              - type: button
+                entity: switch.rachio_bush_drip_watering
+                name: Bush Drip
+                icon: mdi:water-pump
+              - type: button
+                entity: switch.rachio_rose_drip_watering
+                name: Rose Drip
+                icon: mdi:flower-tulip
