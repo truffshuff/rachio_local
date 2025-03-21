@@ -2,7 +2,13 @@
 **Rachio Local** Plugin for Home Assistant is a lightweight integration that enables seamless control and monitoring of Rachio irrigation systems through the Rachio API. By leveraging secure, outgoing API calls, the plugin allows Home Assistant users to retrieve real-time device status, manage watering schedules, control irrigation zones, and receive updates about their Rachio sprinkler system. Unlike traditional integrations that require complex webhook setups, this plugin simplifies connectivity by making direct, authenticated API requests, ensuring a straightforward and secure method of interfacing with Rachio's cloud services without exposing your home network to inbound connections.
 
 ---
-## 💸 Donations Welcome!
+<p align="center">
+  <img src="images/rachio-local.png" alt="Rachio Local" width="400"/>
+</p>
+
+
+---
+## 💸 Donations Appreciated!
 If you find this plugin useful, please consider donating. Your support is greatly appreciated!
 
 [![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=TWRQVYJWC77E6)

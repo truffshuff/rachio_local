@@ -1,10 +1,11 @@
+title: Irrigation
 views:
-  - title: Rachio Control
+  - title: Irrigation
     cards:
       - type: vertical-stack
         cards:
           - type: markdown
-            content: '## Irrigation Zones'
+            content: '## Irrigation Schedules'
           - square: true
             type: grid
             columns: 2
@@ -43,16 +44,31 @@ views:
                 name: System Status
           - type: markdown
             content: >
-              ### Active Zones {% set active = namespace(zones=[]) %} {% for
-              entity in states.switch if entity.state == 'on' and 'rachio' in
-              entity.entity_id and '_watering' in entity.entity_id %}
-                {% set active.zones = active.zones + [entity.attributes.friendly_name] %}
-              {% endfor %} {% if active.zones|length > 0 %}
-                {% for zone in active.zones %}
-                * {{ zone }}
-                {% endfor %}
+              ### Active Irrigation {% set active = namespace(schedules=[], zones=[]) %}
+              {% for entity in states.switch if entity.state == 'on' and 'rachio' in entity.entity_id and '_watering' in entity.entity_id %}
+                {% if 'schedule' in entity.entity_id %}
+                  {% set friendly_name = entity.attributes.friendly_name | default(entity.entity_id) | string %}
+                  {% set active.schedules = active.schedules + [friendly_name] %}
+                {% else %}
+                  {% set friendly_name = entity.attributes.friendly_name | default(entity.entity_id) | string %}
+                  {% set active.zones = active.zones + [friendly_name] %}
+                {% endif %}
+              {% endfor %}
+              {% if active.schedules|length > 0 or active.zones|length > 0 %}
+                {% if active.schedules|length > 0 %}
+                  **Schedules:**
+                  {% for schedule in active.schedules %}
+                  * {{ schedule }}
+                  {% endfor %}
+                {% endif %}
+                {% if active.zones|length > 0 %}
+                  **Zones:**
+                  {% for zone in active.zones %}
+                  * {{ zone }}
+                  {% endfor %}
+                {% endif %}
               {% else %}
-                *No zones currently active*
+                *No irrigation currently active*
               {% endif %}
           - type: entities
             title: Last Run Times
