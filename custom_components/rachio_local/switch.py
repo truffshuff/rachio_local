@@ -1,5 +1,6 @@
 """Rachio switch platform."""
 import logging
+from datetime import datetime
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -19,14 +20,9 @@ async def async_setup_entry(
     """Set up Rachio switches."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
     
-    # Create switches
     switches = []
-    
-    # Zone watering switches
     for zone in coordinator.zones:
         switches.append(RachioZoneSwitch(coordinator, zone))
-    
-    # Schedule watering switches
     for schedule in coordinator.schedules:
         switches.append(RachioScheduleSwitch(coordinator, schedule))
     
@@ -41,27 +37,17 @@ class RachioZoneSwitch(CoordinatorEntity, SwitchEntity):
         self._zone = zone
         self._attr_name = f"Rachio {zone['name']} Watering"
         self._attr_unique_id = f"rachio_zone_{zone['id']}_watering"
+        self._attr_friendly_name = self._attr_name
 
     @property
     def is_on(self):
         """Return true if zone is currently running."""
-        # Check if zone is directly running
-        direct_running = any(
-            running_zone['id'] == self._zone['id'] 
+        is_running = any(
+            running_zone['id'] == self._zone['id']
             for running_zone in self.coordinator.running_zones
         )
-        
-        # Check if zone is running as part of a schedule
-        schedule_running = False
-        if hasattr(self.coordinator, 'current_schedule'):
-            current_schedule = self.coordinator.current_schedule
-            if current_schedule and 'zones' in current_schedule:
-                schedule_running = any(
-                    zone.get('id') == self._zone['id'] and zone.get('active', False)
-                    for zone in current_schedule['zones']
-                )
-        
-        return direct_running or schedule_running
+        _LOGGER.debug(f"Zone {self._zone['id']} ({self._zone['name']}) - Is running: {is_running}")
+        return is_running
 
     @property
     def extra_state_attributes(self):
@@ -72,59 +58,32 @@ class RachioZoneSwitch(CoordinatorEntity, SwitchEntity):
             None
         )
         
-        # Check schedule running info
-        schedule_info = None
-        if hasattr(self.coordinator, 'current_schedule'):
-            current_schedule = self.coordinator.current_schedule
-            if current_schedule and 'zones' in current_schedule:
-                schedule_info = next(
-                    (zone for zone in current_schedule['zones'] 
-                     if zone.get('id') == self._zone['id'] and zone.get('active', False)),
-                    None
-                )
-        
         attrs = {
             'zone_id': self._zone['id'],
             'zone_number': self._zone.get('zoneNumber'),
             'last_watered': self._zone.get('lastWateredDate'),
-            'running': False,
-            'remaining_time': None,
-            'schedule_name': None
+            'running': bool(running_info),
+            'remaining_time': running_info.get('remaining_time') if running_info else None,
+            'schedule_name': running_info.get('schedule_name') if running_info else None,
+            'run_type': running_info.get('run_type') if running_info else None,
+            'detected_externally': running_info.get('run_type') == 'external' if running_info else False
         }
-        
-        if running_info:
-            attrs.update({
-                'running': True,
-                'remaining_time': running_info.get('remaining_duration', 0),
-                'run_type': 'manual'
-            })
-        elif schedule_info:
-            attrs.update({
-                'running': True,
-                'remaining_time': schedule_info.get('remainingDuration', 0),
-                'run_type': 'schedule',
-                'schedule_name': self.coordinator.current_schedule.get('name')
-            })
-        
         return attrs
 
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""
         duration = kwargs.get('duration', 600)  # Default 10 minutes
         try:
-            await self.coordinator.start_zone(
-                self._zone['id'], 
-                duration
-            )
+            await self.coordinator.start_zone(self._zone['id'], duration)
+            await self.coordinator.async_request_refresh()
         except Exception as e:
             _LOGGER.error(f"Error turning on zone {self._zone['name']}: {e}")
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
         try:
-            await self.coordinator.stop_zone(
-                self._zone['id']
-            )
+            await self.coordinator.stop_zone(self._zone['id'])
+            await self.coordinator.async_request_refresh()
         except Exception as e:
             _LOGGER.error(f"Error turning off zone {self._zone['name']}: {e}")
 
@@ -137,14 +96,17 @@ class RachioScheduleSwitch(CoordinatorEntity, SwitchEntity):
         self._schedule = schedule
         self._attr_name = f"Rachio {schedule.get('name', 'Unknown')} Schedule Watering"
         self._attr_unique_id = f"rachio_schedule_{schedule.get('id')}_watering"
+        self._attr_friendly_name = self._attr_name
 
     @property
     def is_on(self):
         """Return true if schedule is currently running."""
-        return any(
-            running_schedule['id'] == self._schedule['id'] 
+        is_running = any(
+            running_schedule['id'] == self._schedule['id']
             for running_schedule in self.coordinator.running_schedules
         )
+        _LOGGER.debug(f"Schedule {self._schedule['id']} ({self._schedule.get('name', 'Unknown')}) - Is running: {is_running}")
+        return is_running
 
     @property
     def extra_state_attributes(self):
@@ -154,31 +116,37 @@ class RachioScheduleSwitch(CoordinatorEntity, SwitchEntity):
              if running_schedule['id'] == self._schedule['id']),
             None
         )
+        active_schedule_info = self.coordinator._active_schedules.get(self._schedule['id'], {})
 
         attrs = {
             'schedule_id': self._schedule['id'],
             'schedule_name': self._schedule.get('name'),
-            'total_duration': self._schedule.get('totalDuration'),
+            'total_duration': active_schedule_info.get('total_duration') if active_schedule_info else self._schedule.get('totalDuration'),  # Updated
             'running': bool(running_info),
-            'current_zone_id': running_info.get('running_zone_id') if running_info else None
+            'current_zone_id': running_info.get('running_zone_id') if running_info else None,
+            'current_zone_name': running_info.get('running_zone_name', 'Unknown Zone') if running_info else 'No Zone Active',
+            'detected_externally': running_info is not None and 'run_type' not in running_info,
+            'manually_persisted': bool(active_schedule_info and (not running_info or running_info.get('running_zone_id') is None)),
+            'remaining_time': (
+                (active_schedule_info.get('total_duration') - 
+                 (datetime.now() - active_schedule_info.get('start_time', datetime.now())).total_seconds())
+                if active_schedule_info else None
+            )
         }
-        
         return attrs
 
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""
         try:
-            await self.coordinator.start_schedule(
-                self._schedule['id']
-            )
+            await self.coordinator.start_schedule(self._schedule['id'])
+            await self.coordinator.async_request_refresh()
         except Exception as e:
-            _LOGGER.error(f"Error turning on schedule {self._schedule['name']}: {e}")
+            _LOGGER.error(f"Error turning on schedule {self._schedule.get('name', 'Unknown')}: {e}")
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
         try:
-            await self.coordinator.stop_schedule(
-                self._schedule['id']
-            )
+            await self.coordinator.stop_schedule(self._schedule['id'])
+            await self.coordinator.async_request_refresh()
         except Exception as e:
-            _LOGGER.error(f"Error turning off schedule {self._schedule['name']}: {e}")
+            _LOGGER.error(f"Error turning off schedule {self._schedule.get('name', 'Unknown')}: {e}")

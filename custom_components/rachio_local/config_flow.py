@@ -1,4 +1,3 @@
-# custom_components/rachio_local/config_flow.py
 """Config flow for Rachio Local Control."""
 import voluptuous as vol
 import requests
@@ -17,15 +16,12 @@ class RachioLocalFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             api_key = user_input[CONF_API_KEY]
-            
-            # Validate the API key by making a test request
             try:
                 headers = {"Authorization": f"Bearer {api_key}"}
                 response = await self.hass.async_add_executor_job(
                     lambda: requests.get(f"{RACHIO_API_URL}/person/info", headers=headers)
                 )
                 response.raise_for_status()
-                
                 return self.async_create_entry(
                     title="Rachio Local Control",
                     data={CONF_API_KEY: api_key}
@@ -35,8 +31,6 @@ class RachioLocalFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_API_KEY): str,
-            }),
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
             errors=errors,
         )
