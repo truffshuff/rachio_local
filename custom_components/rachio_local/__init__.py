@@ -141,7 +141,7 @@ class RachioDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug(f"Device state: {device_state}")
             _LOGGER.debug(f"Current schedule: {current_schedule}")
 
-            # Reset zones but preserve schedules unless explicitly stopped
+            # Reset zones and schedules
             self.running_zones = []
             self.zones = device_state.get("zones", [])
             self.schedules = device_state.get("scheduleRules", [])
@@ -218,6 +218,10 @@ class RachioDataUpdateCoordinator(DataUpdateCoordinator):
                         "run_type": "manual"
                     })
                     _LOGGER.debug(f"Manual zone {zone_id} added to running_zones")
+                else:
+                    # If no active schedule or zone, ensure running_zones is cleared of schedule-related entries
+                    self.running_zones = [z for z in self.running_zones if z.get("run_type") != "schedule"]
+                    _LOGGER.debug("No active schedule detected, cleared schedule-related zones")
 
             # Update running_schedules: Combine API data with manually persisted schedules
             current_time_dt = datetime.now()
@@ -229,13 +233,15 @@ class RachioDataUpdateCoordinator(DataUpdateCoordinator):
                     persisted_schedules.append({
                         "id": schedule_id,
                         "name": schedule_info.get("name", "Unknown Schedule"),
-                        "running_zone_id": None,  # API might not provide this if current_schedule drops
+                        "running_zone_id": None,
                         "running_zone_name": "Unknown Zone"
                     })
                     _LOGGER.debug(f"Persisting schedule {schedule_id} - Elapsed: {elapsed_time}s, Total: {info['total_duration']}s")
                 else:
                     del self._active_schedules[schedule_id]
-                    _LOGGER.debug(f"Schedule {schedule_id} duration expired")
+                    # Explicitly remove zones tied to this completed schedule
+                    self.running_zones = [z for z in self.running_zones if z.get("schedule_id") != schedule_id]
+                    _LOGGER.debug(f"Schedule {schedule_id} duration expired, cleared associated zones")
 
             # Combine API-detected and persisted schedules, avoiding duplicates
             self.running_schedules = api_schedules
