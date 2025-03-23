@@ -141,7 +141,7 @@ class RachioScheduleStatusSensor(CoordinatorEntity, SensorEntity):
         attrs = {
             "schedule_id": self._schedule['id'],
             "schedule_name": self._schedule.get('name'),
-            "total_duration": active_schedule_info.get('total_duration') if active_schedule_info else self._schedule.get('totalDuration'),  # Updated
+            "total_duration": active_schedule_info.get('total_duration') if active_schedule_info else self._schedule.get('totalDuration'),
             "running": bool(running_info),
             "current_zone_id": running_info.get('running_zone_id') if running_info else None,
             "current_zone_name": running_info.get('running_zone_name') if running_info else None,
