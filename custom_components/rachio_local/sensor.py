@@ -1,156 +1,275 @@
-"""Rachio sensor platform."""
+"""Support for Rachio sensors."""
+from __future__ import annotations
+
 import logging
 from datetime import datetime
+from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import PERCENTAGE
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, STATE_WATERING, STATE_IDLE, STATE_SCHEDULED, STATE_PROCESSING
+from .const import (
+    DOMAIN,
+    STATE_ONLINE,
+    STATE_OFFLINE,
+    STATE_WATERING,
+    STATE_NOT_WATERING,
+    DEVICE_TYPE_CONTROLLER,
+    DEVICE_TYPE_SMART_HOSE_TIMER,
+    # Add battery status constants if needed
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback
-) -> None:
-    """Set up Rachio sensors."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]
-    
-    sensors = [RachioDeviceStatusSensor(coordinator)]
-    for zone in coordinator.zones:
-        sensors.extend([
-            RachioZoneLastWateredSensor(coordinator, zone),
-            RachioZoneStatusSensor(coordinator, zone)
-        ])
-    for schedule in coordinator.schedules:
-        sensors.append(RachioScheduleStatusSensor(coordinator, schedule))
-    
-    async_add_entities(sensors)
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Set up the Rachio sensors from config entry."""
+    entities = []
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]
 
-class RachioDeviceStatusSensor(CoordinatorEntity, SensorEntity):
-    """Representation of the Rachio device status sensor."""
+    for device_id, data in entry_data.items():
+        handler = data["handler"]
+        coordinator = data["coordinator"]
+        _LOGGER.debug(f"Setting up sensors for device {device_id} ({getattr(handler, 'name', 'unknown')}) of type {getattr(handler, 'type', 'unknown')}")
 
-    def __init__(self, coordinator):
-        """Initialize the sensor."""
+        # Device-level sensors
+        if handler.type == DEVICE_TYPE_CONTROLLER:
+            entities.append(RachioConnectionSensor(coordinator, handler))
+            for zone in handler.zones:
+                if zone.get("enabled", True):
+                    entities.extend([
+                        RachioZoneStatusSensor(coordinator, handler, zone),
+                        RachioZoneLastWateredSensor(coordinator, handler, zone),
+                    ])
+                    _LOGGER.debug(f"Added zone sensors for {zone.get('name', zone.get('id'))}")
+            for schedule in handler.schedules:
+                entities.append(RachioScheduleStatusSensor(coordinator, handler, schedule))
+                _LOGGER.debug(f"Added schedule status sensor for {schedule.get('name', schedule.get('id'))}")
+            # Add diagnostic sensors
+            entities.append(RachioDeviceStatusSensor(coordinator, handler))
+            entities.append(RachioRainSensorTrippedBinarySensor(coordinator, handler))
+            entities.append(RachioPausedBinarySensor(coordinator, handler))
+            entities.append(RachioOnBinarySensor(coordinator, handler))
+            _LOGGER.debug(f"Added diagnostic sensors for controller {handler.name}")
+        elif handler.type == DEVICE_TYPE_SMART_HOSE_TIMER:
+            for valve in handler.zones:
+                entities.extend([
+                    RachioValveStatusSensor(coordinator, handler, valve),
+                    RachioValveLastWateredSensor(coordinator, handler, valve),
+                    RachioValveBatterySensor(coordinator, handler, valve),
+                ])
+                _LOGGER.debug(f"Added valve sensors for {valve.get('name', valve.get('id'))}")
+    _LOGGER.info(f"Adding {len(entities)} Rachio sensor entities: {[e.name for e in entities]}")
+    async_add_entities(entities)
+
+class RachioBaseEntity(CoordinatorEntity):
+    """Base class for Rachio entities."""
+
+    def __init__(self, coordinator, handler, device_class=None):
+        """Initialize entity properties."""
         super().__init__(coordinator)
-        self._attr_name = "Rachio Device Status"
-        self._attr_unique_id = f"{DOMAIN}_device_status"
+        self.handler = handler
+        self._attr_device_class = device_class
+        self._attr_has_entity_name = True
 
     @property
-    def state(self):
-        """Return the state of the device."""
-        return self.coordinator.device_info.get('status', 'Unknown')
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self.handler.device_id)},
+            "name": self.handler.name,
+            "model": self.handler.model,
+            "manufacturer": "Rachio",
+        }
+
+class RachioDeviceStatusSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing device online/offline status."""
+
+    def __init__(self, coordinator, handler):
+        """Initialize the sensor."""
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} Status"
+        self._attr_unique_id = f"{handler.device_id}_status"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        return STATE_ONLINE if self.handler.status == "ONLINE" else STATE_OFFLINE
 
     @property
     def extra_state_attributes(self):
-        """Return device information."""
+        d = self.handler.device_data
         return {
-            "device_id": self.coordinator.device_id,
-            "name": self.coordinator.device_info.get('name'),
-            "model": self.coordinator.device_info.get('model')
+            "serial_number": d.get("serialNumber"),
+            "mac_address": d.get("macAddress"),
+            "latitude": d.get("latitude"),
+            "longitude": d.get("longitude"),
+            "zip": d.get("zip"),
+            "elevation": d.get("elevation"),
+            "time_zone": d.get("timeZone"),
+            "webhooks": d.get("webhooks"),
+            "schedule_rules": d.get("scheduleRules"),
+            "flex_schedule_rules": d.get("flexScheduleRules"),
         }
 
-class RachioZoneLastWateredSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Rachio zone last watered timestamp sensor."""
-
-    def __init__(self, coordinator, zone):
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._zone = zone
-        self._attr_name = f"Rachio {zone['name']} Last Watered"
-        self._attr_unique_id = f"rachio_zone_{zone['id']}_last_watered"
-        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+class RachioRainSensorTrippedBinarySensor(RachioBaseEntity, SensorEntity):
+    """Binary sensor for rain sensor tripped status."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} Rain Sensor Tripped"
+        self._attr_unique_id = f"{handler.device_id}_rain_sensor_tripped"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def state(self):
+    def native_value(self):
+        return bool(self.handler.device_data.get("rainSensorTripped"))
+
+class RachioPausedBinarySensor(RachioBaseEntity, SensorEntity):
+    """Binary sensor for controller paused status."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} Paused"
+        self._attr_unique_id = f"{handler.device_id}_paused"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        return bool(self.handler.device_data.get("paused"))
+
+class RachioOnBinarySensor(RachioBaseEntity, SensorEntity):
+    """Binary sensor for controller on status."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} On"
+        self._attr_unique_id = f"{handler.device_id}_on"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        return bool(self.handler.device_data.get("on"))
+
+class RachioZoneStatusSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing zone watering status."""
+
+    def __init__(self, coordinator, handler, zone):
+        """Initialize the sensor."""
+        super().__init__(coordinator, handler)
+        self.zone_id = zone["id"]
+        self.zone_name = zone.get("name", f"Zone {zone.get('zoneNumber', '')}")
+        self._attr_name = f"{self.zone_name} Status"
+        self._attr_unique_id = f"{handler.device_id}_{self.zone_id}_status"
+
+    @property
+    def native_value(self):
         """Return the state of the sensor."""
-        last_watered = self._zone.get('lastWateredDate')
-        if last_watered:
-            return datetime.fromtimestamp(last_watered / 1000).isoformat()
+        return STATE_WATERING if self.zone_id in self.handler.running_zones else STATE_NOT_WATERING
+
+class RachioZoneLastWateredSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing when the zone was last watered."""
+
+    def __init__(self, coordinator, handler, zone):
+        """Initialize the sensor."""
+        super().__init__(coordinator, handler, device_class=SensorDeviceClass.TIMESTAMP)
+        self.zone_id = zone["id"]
+        self.zone_name = zone.get("name", f"Zone {zone.get('zoneNumber', '')}")
+        self._attr_name = f"{self.zone_name} Last Watered"
+        self._attr_unique_id = f"{handler.device_id}_{self.zone_id}_last_watered"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        for zone in self.handler.zones:
+            if zone["id"] == self.zone_id:
+                if last_watered := zone.get("lastWateredDate"):
+                    # Convert timestamp to UTC datetime
+                    return dt_util.as_utc(datetime.fromtimestamp(last_watered / 1000))
         return None
 
-class RachioZoneStatusSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Rachio zone status sensor."""
+class RachioValveStatusSensor(RachioZoneStatusSensor):
+    """Sensor showing valve watering status."""
 
-    def __init__(self, coordinator, zone):
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._zone = zone
-        self._attr_name = f"Rachio {zone['name']} Status"
-        self._attr_unique_id = f"rachio_zone_{zone['id']}_status"
+class RachioValveLastWateredSensor(RachioZoneLastWateredSensor):
+    """Sensor showing when the valve was last watered (Smart Hose Timer)."""
+    def __init__(self, coordinator, handler, valve):
+        super().__init__(coordinator, handler, valve)
+        self.valve_id = valve["id"]
+    @property
+    def native_value(self):
+        # Use diagnostics cache if available
+        if hasattr(self.handler, "valve_diagnostics"):
+            diag = self.handler.valve_diagnostics.get(self.valve_id)
+            if diag and diag.get("lastWatered"):
+                try:
+                    dt = datetime.fromisoformat(diag["lastWatered"].replace("Z", "+00:00"))
+                    return dt_util.as_utc(dt)
+                except Exception:
+                    return None
+        return None
+
+class RachioValveBatterySensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing valve battery status (Smart Hose Timer)."""
+    def __init__(self, coordinator, handler, valve):
+        super().__init__(coordinator, handler)
+        self.valve_id = valve["id"]
+        self.valve_name = valve.get("name", f"Valve {valve.get('id')}")
+        self._attr_name = f"{self.valve_name} Battery"
+        self._attr_unique_id = f"{handler.device_id}_{self.valve_id}_battery"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def state(self):
-        """Return the state of the zone."""
-        is_running = any(
-            running_zone['id'] == self._zone['id']
-            for running_zone in self.coordinator.running_zones
-        )
-        _LOGGER.debug(f"Zone {self._zone['id']} status - Running: {is_running}")
-        return STATE_WATERING if is_running else self._zone.get('status', STATE_IDLE)
+    def native_value(self):
+        if hasattr(self.handler, "valve_diagnostics"):
+            diag = self.handler.valve_diagnostics.get(self.valve_id)
+            if diag:
+                return diag.get("batteryStatus")
+        return None
+
+class RachioScheduleStatusSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing schedule running status for controller."""
+    def __init__(self, coordinator, handler, schedule):
+        super().__init__(coordinator, handler)
+        self.schedule_id = schedule["id"]
+        self.schedule_name = schedule.get("name", "Schedule")
+        self._attr_name = f"{self.schedule_name} Schedule Status"
+        self._attr_unique_id = f"{handler.device_id}_{self.schedule_id}_schedule_status"
+
+    @property
+    def native_value(self):
+        return STATE_WATERING if self.schedule_id in self.handler.running_schedules else STATE_NOT_WATERING
+
+class RachioConnectionSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing device connection status (online/offline)."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} Connection"
+        self._attr_unique_id = f"{handler.device_id}_connection"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        return STATE_ONLINE if self.handler.status == "ONLINE" else STATE_OFFLINE
 
     @property
     def extra_state_attributes(self):
-        """Return additional zone attributes."""
-        running_info = next(
-            (zone for zone in self.coordinator.running_zones if zone['id'] == self._zone['id']),
-            None
-        )
+        d = self.handler.device_data
         return {
-            "zone_id": self._zone['id'],
-            "zone_number": self._zone.get('zoneNumber'),
-            "enabled": self._zone.get('enabled', False),
-            "running": bool(running_info),
-            "remaining_time": running_info.get('remaining_time') if running_info else None,
-            "run_type": running_info.get('run_type') if running_info else None,
-            "detected_externally": running_info.get('run_type') == 'external' if running_info else False
+            "serial_number": d.get("serialNumber"),
+            "mac_address": d.get("macAddress"),
+            "latitude": d.get("latitude"),
+            "longitude": d.get("longitude"),
+            "zip": d.get("zip"),
+            "elevation": d.get("elevation"),
+            "time_zone": d.get("timeZone"),
+            "webhooks": d.get("webhooks"),
+            "schedule_rules": d.get("scheduleRules"),
+            "flex_schedule_rules": d.get("flexScheduleRules"),
         }
-
-class RachioScheduleStatusSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Rachio schedule status sensor."""
-
-    def __init__(self, coordinator, schedule):
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._schedule = schedule
-        self._attr_name = f"Rachio {schedule.get('name', 'Unknown')} Schedule Status"
-        self._attr_unique_id = f"rachio_schedule_{schedule.get('id')}_status"
-
-    @property
-    def state(self):
-        """Return the state of the schedule."""
-        is_running = any(
-            running_schedule['id'] == self._schedule['id']
-            for running_schedule in self.coordinator.running_schedules
-        )
-        _LOGGER.debug(f"Schedule {self._schedule['id']} status - Running: {is_running}")
-        return STATE_WATERING if is_running else self._schedule.get('status', STATE_SCHEDULED)
-
-    @property
-    def extra_state_attributes(self):
-        """Return additional schedule attributes."""
-        running_info = next(
-            (sched for sched in self.coordinator.running_schedules if sched['id'] == self._schedule['id']),
-            None
-        )
-        active_schedule_info = self.coordinator._active_schedules.get(self._schedule['id'], {})
-        attrs = {
-            "schedule_id": self._schedule['id'],
-            "schedule_name": self._schedule.get('name'),
-            "total_duration": active_schedule_info.get('total_duration') if active_schedule_info else self._schedule.get('totalDuration'),
-            "running": bool(running_info),
-            "current_zone_id": running_info.get('running_zone_id') if running_info else None,
-            "current_zone_name": running_info.get('running_zone_name') if running_info else None,
-            "detected_externally": running_info is not None and 'run_type' not in running_info,
-            "manually_persisted": bool(active_schedule_info and (not running_info or running_info.get('running_zone_id') is None)),
-            "remaining_time": (
-                (active_schedule_info.get('total_duration') - 
-                 (datetime.now() - active_schedule_info.get('start_time', datetime.now())).total_seconds())
-                if active_schedule_info else None
-            )
-        }
-        return attrs

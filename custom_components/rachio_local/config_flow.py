@@ -1,36 +1,68 @@
-"""Config flow for Rachio Local Control."""
-import voluptuous as vol
-import requests
-from homeassistant import config_entries
-from homeassistant.core import callback
-from .const import DOMAIN, CONF_API_KEY, RACHIO_API_URL
+"""Config flow for Rachio Local integration."""
+from __future__ import annotations
 
-class RachioLocalFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a Rachio Local config flow."""
+import logging
+from typing import Any
+
+import voluptuous as vol
+from aiohttp import ClientResponseError
+from homeassistant import config_entries
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResult
+import homeassistant.helpers.config_validation as cv
+
+from .const import (
+    DOMAIN,
+    DEFAULT_NAME,
+    API_BASE_URL,
+    CLOUD_BASE_URL,
+)
+from .auth import RachioAuth
+
+_LOGGER = logging.getLogger(__name__)
+
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the user input allows us to connect."""
+    auth = RachioAuth(data[CONF_API_KEY])
+    try:
+        user_info = await auth.async_get_user_info()
+        return {"title": f"Rachio ({user_info.get('username', DEFAULT_NAME)})"}
+    except ClientResponseError as err:
+        if err.status == 429:
+            _LOGGER.error("Rate limited by Rachio API - please wait a few minutes and try again")
+            raise Exception("rate_limit") from err
+        raise
+    except Exception as err:
+        _LOGGER.error("Failed to connect to Rachio: %s", err)
+        raise
+
+class RachioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Rachio Local."""
 
     VERSION = 1
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle the initial step."""
         errors = {}
 
         if user_input is not None:
-            api_key = user_input[CONF_API_KEY]
             try:
-                headers = {"Authorization": f"Bearer {api_key}"}
-                response = await self.hass.async_add_executor_job(
-                    lambda: requests.get(f"{RACHIO_API_URL}/person/info", headers=headers)
-                )
-                response.raise_for_status()
-                return self.async_create_entry(
-                    title="Rachio Local Control",
-                    data={CONF_API_KEY: api_key}
-                )
-            except requests.exceptions.RequestException:
-                errors["base"] = "invalid_auth"
+                info = await validate_input(self.hass, user_input)
+                return self.async_create_entry(title=info["title"], data=user_input)
+            except Exception as err:
+                if str(err) == "rate_limit":
+                    errors["base"] = "rate_limit"
+                else:
+                    errors["base"] = "cannot_connect"
+                _LOGGER.exception("Validation failed")
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            data_schema=vol.Schema({
+                vol.Required(CONF_API_KEY): str,
+            }),
             errors=errors,
         )
