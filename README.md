@@ -11,8 +11,13 @@
 ## 💸 Donations Appreciated!
 If you find this plugin useful, please consider donating. Your support is greatly appreciated!
 
+[![Sponsor Me](https://img.shields.io/badge/Sponsor%20Me-%F0%9F%92%AA-purple?style=for-the-badge)](https://github.com/sponsors/biofects?frequency=recurring&sponsor=biofects)
+
+
+
 [![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=TWRQVYJWC77E6)
 ---
+
 
 ## 🔍 About this Plugin
  **Rachio Local** removes the need to open your home assistant to public network for incoming traffic. Rachio allows 1700 calls a day to API and I have done my best to prevent exhausting them
@@ -61,6 +66,21 @@ Whether schedules overlap
 - Schedule Management: Switches to control and monitor irrigation schedules, allowing start and stop of predefined watering schedules.
 - Last Watered Timestamp: Sensors that track and display the last time each zone was watered.
 - Periodic Data Polling: Automatic data updates every 5 minutes to keep Home Assistant synchronized with the Rachio device status.
+
+## 🚨 Changelog
+
+### v2.0.0 (2025-06-20)
+- Major refactor: Device handler logic split into dedicated files for controllers and smart hose timers.
+- Added full support for Rachio Smart Hose Timer devices (valves, battery, last watered, etc.).
+- Improved and fixed optimistic timer and state clearing logic for both device types.
+- Persistent caching for last watered on smart hose timer.
+- Added new diagnostic sensors: battery, paused, on, rain sensor tripped, and schedule status.
+- Rain delay control now includes a switch and a dropdown (select entity) for duration.
+- Removed connection sensor for smart hose timers (still present for controllers).
+- Improved Home Assistant compatibility and removed warnings about device_class/unit_of_measurement.
+- Robust error handling and more efficient polling logic.
+- All sensors/entities are now registered with the correct handler/coordinator.
+- Many bug fixes and code cleanups.
 
 ## Notes
 My Home Assistant runs in Docker on a server. I don't use the supervised version, nor do I want to expose Home Assistant servers publicly. This is my personal choice, despite it requiring more manual management.

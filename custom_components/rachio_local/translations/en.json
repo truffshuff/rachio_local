@@ -1,0 +1,22 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Connect to Rachio",
+                "description": "Set up your Rachio integration using your API key.",
+                "data": {
+                    "api_key": "API Key"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect to Rachio",
+            "invalid_auth": "Invalid API key",
+            "rate_limit": "Rate limited by Rachio API - please wait a few minutes before trying again",
+            "unknown": "Unexpected error occurred"
+        },
+        "abort": {
+            "already_configured": "Device is already configured"
+        }
+    }
+}
