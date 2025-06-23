@@ -69,6 +69,9 @@ Whether schedules overlap
 
 ## 🚨 Changelog
 
+### v2.0.1 (2025-06-23)
+- Fix: Prevent KeyError if no schedule is running (safe access to schedule id in controller).
+
 ### v2.0.0 (2025-06-20)
 - Major refactor: Device handler logic split into dedicated files for controllers and smart hose timers.
 - Added full support for Rachio Smart Hose Timer devices (valves, battery, last watered, etc.).
