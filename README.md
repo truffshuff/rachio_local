@@ -69,6 +69,10 @@ Whether schedules overlap
 
 ## 🚨 Changelog
 
+### v2.1.0 (2025-06-23)
+- Feature: Added support for starting and stopping schedules using the Rachio ScheduleRuleService API (`/public/schedulerule/start` and `/public/schedulerule/stop`).
+- No changes to zone logic; zone start/stop remains as before.
+
 ### v2.0.1 (2025-06-23)
 - Fix: Prevent KeyError if no schedule is running (safe access to schedule id in controller).
 
