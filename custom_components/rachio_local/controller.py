@@ -14,6 +14,8 @@ from .const import (
     DEVICE_CURRENT_SCHEDULE,
     DEVICE_GET_ENDPOINT,
     DEVICE_STOP_WATER,
+    SCHEDULE_START,
+    SCHEDULE_STOP,
     ZONE_START,
 )
 from .utils import get_update_interval
@@ -192,13 +194,43 @@ class RachioControllerHandler:
         return remaining_secs / 60  # Convert to minutes
 
     async def async_start_schedule(self, schedule_id, duration=None):
-        """Stub for starting a schedule (not implemented for controller)."""
-        _LOGGER.warning("async_start_schedule called on controller, but not implemented.")
-        # Optionally, implement if controller supports schedule start via API
-        return False
+        """Start a schedule on the controller using the Rachio API."""
+        async with ClientSession() as session:
+            url = f"{API_BASE_URL}/{SCHEDULE_START}"
+            payload = {"id": schedule_id}
+            if duration:
+                payload["duration"] = duration
+            _LOGGER.info("Starting schedule: %s with payload: %s", url, payload)
+            async with session.put(url, headers=self.headers, json=payload) as resp:
+                _LOGGER.info("Start schedule response status: %s", resp.status)
+                if resp.status >= 400:
+                    _LOGGER.error("Start schedule response text: %s", await resp.text())
+                    return False
+                resp.raise_for_status()
+                try:
+                    result = await resp.json()
+                    if self.coordinator:
+                        await self.coordinator.async_request_refresh()
+                    return result
+                except Exception:
+                    return True
 
     async def async_stop_schedule(self, schedule_id):
-        """Stub for stopping a schedule (not implemented for controller)."""
-        _LOGGER.warning("async_stop_schedule called on controller, but not implemented.")
-        # Optionally, implement if controller supports schedule stop via API
-        return False
+        """Stop a schedule on the controller using the Rachio API."""
+        async with ClientSession() as session:
+            url = f"{API_BASE_URL}/{SCHEDULE_STOP}"
+            payload = {"id": schedule_id}
+            _LOGGER.info("Stopping schedule: %s with payload: %s", url, payload)
+            async with session.put(url, headers=self.headers, json=payload) as resp:
+                _LOGGER.info("Stop schedule response status: %s", resp.status)
+                if resp.status >= 400:
+                    _LOGGER.error("Stop schedule response text: %s", await resp.text())
+                    return False
+                resp.raise_for_status()
+                try:
+                    result = await resp.json()
+                    if self.coordinator:
+                        await self.coordinator.async_request_refresh()
+                    return result
+                except Exception:
+                    return True
