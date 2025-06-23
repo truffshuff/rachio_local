@@ -74,7 +74,7 @@ class RachioControllerHandler:
                 # Current schedule
                 url = f"{API_BASE_URL}/{DEVICE_CURRENT_SCHEDULE.format(id=self.device_id)}"
                 data = await self._make_request(session, url)
-                if data:
+                if data and "id" in data:
                     self.running_schedules = {data["id"]: data}
                     self.running_zones = {
                         zone["id"]: zone for zone in data.get("zones", [])
