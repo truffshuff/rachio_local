@@ -17,7 +17,7 @@ def get_update_interval(handler) -> timedelta:
             if remaining := schedule.get("remaining", 0):
                 remaining_mins = max(remaining_mins, remaining / 60)
     if not active:
-        return timedelta(minutes=30)
+        return timedelta(minutes=5)  # Changed from 30 to 5 minutes
     elif remaining_mins < 1:
         return timedelta(seconds=10)
     elif remaining_mins < 5:

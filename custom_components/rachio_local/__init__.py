@@ -102,21 +102,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             else:
                 handler = RachioControllerHandler(api_key, device)
 
-            async def _async_update():
+            handler._fast_poll_count = 0  # Track fast polls
+            handler._max_fast_polls = 3   # Max number of 30s polls
+
+            async def _async_update(handler=handler):
+                _LOGGER.warning("[COORDINATOR] _async_update called for %s at %s", handler.name, datetime.now().isoformat())
                 await handler.async_update()
                 new_interval = handler._get_update_interval()
-                handler.coordinator.update_interval = new_interval
+                # Switch to dynamic interval after max fast polls
+                if handler.coordinator.update_interval.total_seconds() <= 30:
+                    handler._fast_poll_count += 1
+                    if handler._fast_poll_count >= handler._max_fast_polls:
+                        handler.coordinator.update_interval = new_interval
+                        _LOGGER.info("%s: Switching to dynamic polling interval: %s", handler.name, str(new_interval))
+                else:
+                    handler.coordinator.update_interval = new_interval
                 if handler.running_zones or handler.running_schedules:
                     _LOGGER.info(
                         "%s: Active watering with %.1f minutes remaining - polling every %s",
                         handler.name,
                         handler._get_remaining_time(),
-                        str(new_interval)
+                        str(handler.coordinator.update_interval)
                     )
                 else:
                     _LOGGER.info(
-                        "%s: No active watering - polling every 30 minutes",
-                        handler.name
+                        "%s: No active watering - polling every %s",
+                        handler.name,
+                        str(handler.coordinator.update_interval)
                     )
 
             coordinator = DataUpdateCoordinator(
