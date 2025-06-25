@@ -35,10 +35,18 @@ class RachioSmartHoseTimerHandler:
         self.coordinator = None
         self._pending_start = {}
         self.valve_diagnostics = {}  # Cache for per-valve diagnostics
+        self.api_call_count = 0
+        self.api_rate_limit = None
+        self.api_rate_remaining = None
+        self.api_rate_reset = None
 
     async def _make_request(self, session, url: str) -> dict | None:
         try:
             async with session.get(url, headers=self.headers) as resp:
+                self.api_call_count += 1
+                self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
+                self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
+                self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
                 if resp.status == 404:
                     _LOGGER.debug("%s: No data found at %s", self.name, url)
                     return None

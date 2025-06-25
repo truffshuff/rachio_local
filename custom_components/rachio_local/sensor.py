@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -57,6 +57,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entities.append(RachioRainSensorTrippedBinarySensor(coordinator, handler))
             entities.append(RachioPausedBinarySensor(coordinator, handler))
             entities.append(RachioOnBinarySensor(coordinator, handler))
+            entities.append(RachioAPICallSensor(coordinator, handler))
             _LOGGER.debug(f"Added diagnostic sensors for controller {handler.name}")
         elif handler.type == DEVICE_TYPE_SMART_HOSE_TIMER:
             for valve in handler.zones:
@@ -272,4 +273,44 @@ class RachioConnectionSensor(RachioBaseEntity, SensorEntity):
             "webhooks": d.get("webhooks"),
             "schedule_rules": d.get("scheduleRules"),
             "flex_schedule_rules": d.get("flexScheduleRules"),
+        }
+
+class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing API call count and rate limit info."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} API Calls"
+        self._attr_unique_id = f"{handler.device_id}_api_calls"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def native_value(self):
+        return self.handler.api_call_count
+
+    @property
+    def extra_state_attributes(self):
+        # Convert reset time to local time if possible
+        reset_utc = self.handler.api_rate_reset
+        reset_local = None
+        if reset_utc:
+            try:
+                # Try parsing as ISO8601 or epoch seconds
+                if reset_utc.isdigit():
+                    # If it's epoch seconds
+                    reset_dt = datetime.fromtimestamp(int(reset_utc), tz=timezone.utc)
+                else:
+                    # Try parsing as RFC2822 or ISO8601
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        reset_dt = parsedate_to_datetime(reset_utc)
+                    except Exception:
+                        reset_dt = datetime.fromisoformat(reset_utc)
+                reset_local = reset_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                reset_local = reset_utc
+        return {
+            "rate_limit": self.handler.api_rate_limit,
+            "rate_remaining": self.handler.api_rate_remaining,
+            "rate_reset": reset_local,
         }
