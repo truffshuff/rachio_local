@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v2.3.1 (2025-06-27)
+- Fix: Smart Hose Timer switch and sensor now correctly reflect stopped state when stopped from either the app or Home Assistant.
+- Improved: Enhanced polling logic for Smart Hose Timer to detect active/inactive valves based on reported state and last watering action.
+- Chore: Bump manifest version to 2.3.1.
+
 ## v2.3.0 (2025-06-27)
 - Fix: Zone and schedule sensors now always reflect the true running state, even for manual runs started from the Rachio app.
 - Improved: Polling logic is now fully dynamic and API-efficient, with interval and device count exposed via a Home Assistant sensor.
