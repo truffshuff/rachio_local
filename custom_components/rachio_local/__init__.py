@@ -95,6 +95,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = {}
 
+        # Set num_devices on each coordinator for correct polling logic
+        num_devices = len(devices)
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
@@ -138,6 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 update_method=_async_update,
                 update_interval=timedelta(seconds=30),
             )
+            coordinator.num_devices = num_devices  # <-- Set total device count here
             handler.coordinator = coordinator
             hass.data[DOMAIN][entry.entry_id][device_id] = {
                 "handler": handler,

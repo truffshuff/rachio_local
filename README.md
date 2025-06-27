@@ -69,25 +69,7 @@ Whether schedules overlap
 
 ## 🚨 Changelog
 
-### v2.1.0 (2025-06-23)
-- Feature: Added support for starting and stopping schedules using the Rachio ScheduleRuleService API (`/public/schedulerule/start` and `/public/schedulerule/stop`).
-- No changes to zone logic; zone start/stop remains as before.
-
-### v2.0.1 (2025-06-23)
-- Fix: Prevent KeyError if no schedule is running (safe access to schedule id in controller).
-
-### v2.0.0 (2025-06-20)
-- Major refactor: Device handler logic split into dedicated files for controllers and smart hose timers.
-- Added full support for Rachio Smart Hose Timer devices (valves, battery, last watered, etc.).
-- Improved and fixed optimistic timer and state clearing logic for both device types.
-- Persistent caching for last watered on smart hose timer.
-- Added new diagnostic sensors: battery, paused, on, rain sensor tripped, and schedule status.
-- Rain delay control now includes a switch and a dropdown (select entity) for duration.
-- Removed connection sensor for smart hose timers (still present for controllers).
-- Improved Home Assistant compatibility and removed warnings about device_class/unit_of_measurement.
-- Robust error handling and more efficient polling logic.
-- All sensors/entities are now registered with the correct handler/coordinator.
-- Many bug fixes and code cleanups.
+See [CHANGELOG.md](./CHANGELOG.md) for the full changelog.
 
 ## Notes
 My Home Assistant runs in Docker on a server. I don't use the supervised version, nor do I want to expose Home Assistant servers publicly. This is my personal choice, despite it requiring more manual management.

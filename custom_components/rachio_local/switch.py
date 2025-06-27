@@ -132,8 +132,10 @@ class RachioZoneSwitch(RachioSwitch):
 
     @property
     def is_on(self):
-        """Return if the switch is on."""
-        return self.handler.is_zone_optimistically_on(self.zone_id)
+        # Use handler's shared optimistic state logic
+        state = self.handler.is_zone_optimistically_on(self.zone_id)
+        _LOGGER.debug(f"[ZoneSwitch] is_on check: zone_id={self.zone_id}, is_on={state}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        return state
 
     @property
     def extra_state_attributes(self):
@@ -152,9 +154,17 @@ class RachioZoneSwitch(RachioSwitch):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
+        # Debug: Log before attempting to stop
+        _LOGGER.debug(f"[ZoneSwitch] async_turn_off: zone_id={self.zone_id}, is_on={self.is_on}")
         if self.is_on:
             await self.handler.async_stop_zone(self.zone_id)
+            # Clear any pending optimistic state for this zone
+            if hasattr(self.handler, '_pending_start'):
+                self.handler._pending_start.pop(self.zone_id, None)
+                self.handler._pending_start.pop(str(self.zone_id), None)
             await self.coordinator.async_request_refresh()
+        else:
+            _LOGGER.debug(f"[ZoneSwitch] async_turn_off: zone_id={self.zone_id} not running, skipping stop.")
 
 class RachioScheduleSwitch(RachioSwitch):
     """Representation of a schedule switch."""
@@ -171,7 +181,7 @@ class RachioScheduleSwitch(RachioSwitch):
 
     @property
     def is_on(self):
-        """Return if the switch is on."""
+        """Return if the switch is on (true API state, not just optimistic)."""
         return self.schedule_id in self.handler.running_schedules
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -189,16 +199,16 @@ class RachioValveSwitch(RachioZoneSwitch):
     """Representation of a valve switch."""
 
     @property
+    def is_on(self):
+        """Return if the valve is on (true API state, not just optimistic)."""
+        return self.zone_id in self.handler.running_zones
+
+    @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         return {
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
-
-    @property
-    def is_on(self):
-        """Return if the switch is on."""
-        return self.handler.is_zone_optimistically_on(self.zone_id)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""

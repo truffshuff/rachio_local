@@ -58,6 +58,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entities.append(RachioPausedBinarySensor(coordinator, handler))
             entities.append(RachioOnBinarySensor(coordinator, handler))
             entities.append(RachioAPICallSensor(coordinator, handler))
+            entities.append(RachioPollingStatusSensor(coordinator, handler))  # Add polling status sensor
             _LOGGER.debug(f"Added diagnostic sensors for controller {handler.name}")
         elif handler.type == DEVICE_TYPE_SMART_HOSE_TIMER:
             for valve in handler.zones:
@@ -170,8 +171,10 @@ class RachioZoneStatusSensor(RachioBaseEntity, SensorEntity):
 
     @property
     def native_value(self):
-        """Return the state of the sensor."""
-        return STATE_WATERING if self.zone_id in self.handler.running_zones else STATE_NOT_WATERING
+        """Return the state of the sensor (optimistic or real)."""
+        is_on = self.handler.is_zone_optimistically_on(self.zone_id)
+        _LOGGER.debug(f"[ZoneStatusSensor] native_value: zone_id={self.zone_id}, is_on={is_on}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        return STATE_WATERING if is_on else STATE_NOT_WATERING
 
 class RachioZoneLastWateredSensor(RachioBaseEntity, SensorEntity):
     """Sensor showing when the zone was last watered."""
@@ -286,21 +289,18 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.handler.api_call_count
+        # Always return the latest value from the handler, do not reset on reload
+        return self.handler.api_rate_limit
 
     @property
     def extra_state_attributes(self):
-        # Convert reset time to local time if possible
         reset_utc = self.handler.api_rate_reset
         reset_local = None
         if reset_utc:
             try:
-                # Try parsing as ISO8601 or epoch seconds
                 if reset_utc.isdigit():
-                    # If it's epoch seconds
                     reset_dt = datetime.fromtimestamp(int(reset_utc), tz=timezone.utc)
                 else:
-                    # Try parsing as RFC2822 or ISO8601
                     try:
                         from email.utils import parsedate_to_datetime
                         reset_dt = parsedate_to_datetime(reset_utc)
@@ -313,4 +313,39 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
             "rate_limit": self.handler.api_rate_limit,
             "rate_remaining": self.handler.api_rate_remaining,
             "rate_reset": reset_local,
+        }
+
+class RachioPollingStatusSensor(RachioBaseEntity, SensorEntity):
+    """Sensor showing current polling interval and logic explanation."""
+    def __init__(self, coordinator, handler):
+        super().__init__(coordinator, handler)
+        self._attr_name = f"{handler.name} Polling Status"
+        self._attr_unique_id = f"{handler.device_id}_polling_status"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        # Show the current polling interval in seconds
+        interval = self.handler._get_update_interval().total_seconds()
+        return int(interval)
+
+    @property
+    def extra_state_attributes(self):
+        num_devices = 1
+        if self.handler.coordinator and hasattr(self.handler.coordinator, 'num_devices'):
+            num_devices = self.handler.coordinator.num_devices
+        interval = self.handler._get_update_interval().total_seconds()
+        calls_per_poll = num_devices * 2
+        max_calls_per_hour = 80
+        explanation = (
+            f"Polling interval is dynamically calculated based on the number of devices/controllers. "
+            f"Each device makes 2 API calls per poll. Interval is set to avoid exceeding {max_calls_per_hour} calls/hour. "
+            f"Current: {num_devices} device(s), {calls_per_poll} calls/poll, {interval}s interval."
+        )
+        return {
+            "num_devices": num_devices,
+            "calls_per_poll": calls_per_poll,
+            "max_calls_per_hour": max_calls_per_hour,
+            "polling_interval_seconds": interval,
+            "explanation": explanation,
         }
