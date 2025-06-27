@@ -123,37 +123,77 @@ class RachioControllerHandler:
                 # Current schedule (for schedule info and fallback)
                 url = f"{API_BASE_URL}/{DEVICE_CURRENT_SCHEDULE.format(id=self.device_id)}"
                 data = await self._make_request(session, url)
-                _LOGGER.debug(f"[POLL] Rate limit: remaining={self.api_rate_remaining}, reset={self.api_rate_reset}")
-                schedule_key = data.get("scheduleRuleId") if data and "scheduleRuleId" in data else data.get("id") if data and "id" in data else None
-                # Always check for running zones in schedule data first
-                if data and schedule_key:
-                    self.running_schedules = {schedule_key: data}
-                    if "zones" in data:
-                        for zone in data["zones"]:
-                            if zone.get("remaining", 0) > 0 and zone.get("id"):
-                                running_zones[zone["id"]] = zone
-                    if "zoneId" in data and data.get("remaining", 0) > 0:
-                        running_zones[data["zoneId"]] = {
-                            "id": data["zoneId"],
-                            "remaining": data.get("remaining", 0)
+                _LOGGER.warning(f"[DEBUG] /current_schedule API response: {data}")
+                # --- AUTHORITATIVE: Use only /current_schedule for running_zones ---
+                running_zones = {}
+                running_schedules = {}
+                if isinstance(data, list):
+                    for sched in data:
+                        zone_id = sched.get("zoneId")
+                        # Prefer remainingSeconds, fallback to remaining, then zoneDuration/duration if status is PROCESSING
+                        remaining = sched.get("remainingSeconds")
+                        if remaining is None:
+                            remaining = sched.get("remaining")
+                        if (remaining is None or remaining == 0) and sched.get("status", "").upper() in ("PROCESSING", "WATERING"):
+                            remaining = sched.get("zoneDuration") or sched.get("duration") or 0
+                        sched_type = sched.get("scheduleType")
+                        sched_id = sched.get("scheduleRuleId") or sched.get("id")
+                        if zone_id and remaining and remaining > 0:
+                            running_zones[zone_id] = {
+                                "id": zone_id,
+                                "remaining": remaining,
+                                "schedule_type": sched_type,
+                                "schedule_id": sched_id,
+                                "zone_name": sched.get("zoneName"),
+                                "zone_number": sched.get("zoneNumber"),
+                                "started_at": sched.get("zoneStartDate"),
+                            }
+                            if sched_id:
+                                running_schedules[sched_id] = sched
+                            _LOGGER.debug(f"[POLL] DEVICE_CURRENT_SCHEDULE: Running zone: id={zone_id}, remaining={remaining}, type={sched_type}, sched_id={sched_id}")
+                elif data:
+                    # Some controllers may return a single object instead of a list
+                    zone_id = data.get("zoneId")
+                    # Try to get remaining time from all possible fields
+                    remaining = (
+                        data.get("remainingSeconds")
+                        or data.get("remaining")
+                        or 0
+                    )
+                    sched_type = data.get("scheduleType")
+                    sched_id = data.get("scheduleRuleId") or data.get("id")
+                    # If remaining is 0 or missing, but status is PROCESSING/WATERING and zoneId is present, use zoneDuration or duration
+                    if zone_id and (remaining > 0 or (data.get("status") in ("PROCESSING", "WATERING") and (data.get("zoneDuration") or data.get("duration")))):
+                        if remaining <= 0:
+                            remaining = data.get("zoneDuration") or data.get("duration") or 0
+                        running_zones[zone_id] = {
+                            "id": zone_id,
+                            "remaining": remaining,
+                            "schedule_type": sched_type,
+                            "schedule_id": sched_id,
+                            "zone_name": data.get("zoneName"),
+                            "zone_number": data.get("zoneNumber"),
+                            "started_at": data.get("zoneStartDate"),
                         }
-                else:
-                    self.running_schedules = {}
-
-                # Use device endpoint as authoritative for running_zones
+                        if sched_id:
+                            running_schedules[sched_id] = data
+                        _LOGGER.debug(f"[POLL] DEVICE_CURRENT_SCHEDULE: Running zone: id={zone_id}, remaining={remaining}, type={sched_type}, sched_id={sched_id}")
+                # Use only /current_schedule for running_zones and running_schedules
                 self.running_zones = running_zones
+                self.running_schedules = running_schedules
+                _LOGGER.warning(f"[DEBUG] running_zones after poll: {self.running_zones}")
 
-                # Reconcile optimistic state: clear any pending starts if not running
-                now = time.time()
-                to_remove = []
-                for zone_id, until in self._pending_start.items():
-                    if zone_id not in self.running_zones and now > until:
-                        to_remove.append(zone_id)
-                for zone_id in to_remove:
-                    self._pending_start.pop(zone_id, None)
+            # Reconcile optimistic state: clear any pending starts if not running
+            now = time.time()
+            to_remove = []
+            for zone_id, until in self._pending_start.items():
+                if zone_id not in self.running_zones and now > until:
+                    to_remove.append(zone_id)
+            for zone_id in to_remove:
+                self._pending_start.pop(zone_id, None)
 
-                # Summary log
-                _LOGGER.debug(f"[POLL] Schedules: {list(self.running_schedules.keys())} | Zones: {list(self.running_zones.keys())} | Optimistic: {self._pending_start}")
+            # Summary log
+            _LOGGER.debug(f"[POLL] Schedules: {list(self.running_schedules.keys())} | Zones: {list(self.running_zones.keys())} | Optimistic: {self._pending_start}")
         except Exception as err:
             _LOGGER.error(f"[POLL] Error updating controller: {err}")
             raise
@@ -249,7 +289,9 @@ class RachioControllerHandler:
         now = time.time()
         pending = self._pending_start.get(zone_id, 0) > now
         running = zone_id in self.running_zones
-        _LOGGER.debug(f"[OPTIMISTIC] is_zone_optimistically_on: zone_id={zone_id}, running={running}, pending={pending}, now={now}, pending_until={self._pending_start.get(zone_id)}")
+        _LOGGER.debug(f"[OPTIMISTIC] is_zone_optimistically_on: zone_id={zone_id}, running={running}, pending={pending}, now={now}, pending_until={self._pending_start.get(zone_id)}, running_zones={list(self.running_zones.keys())}")
+        # Extra debug: print full running_zones dict for troubleshooting
+        _LOGGER.debug(f"[OPTIMISTIC] running_zones full: {self.running_zones}")
         return running or pending
 
     @staticmethod

@@ -92,11 +92,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         devices = await auth.async_discover_devices()
         _LOGGER.info("Found %d Rachio devices: %s", len(devices), [d.get('name') or d.get('serialNumber') for d in devices])
         
-        hass.data.setdefault(DOMAIN, {})
-        hass.data[DOMAIN][entry.entry_id] = {}
-
-        # Set num_devices on each coordinator for correct polling logic
+        # Set up data structure for devices and global values
         num_devices = len(devices)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][entry.entry_id] = {
+            "devices": {},
+            "num_devices": num_devices,
+        }
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
@@ -142,7 +144,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             coordinator.num_devices = num_devices  # <-- Set total device count here
             handler.coordinator = coordinator
-            hass.data[DOMAIN][entry.entry_id][device_id] = {
+            hass.data[DOMAIN][entry.entry_id]["devices"][device_id] = {
                 "handler": handler,
                 "coordinator": coordinator,
             }
