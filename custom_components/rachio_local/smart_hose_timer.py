@@ -86,8 +86,25 @@ class RachioSmartHoseTimerHandler:
                 else:
                     self.schedules = []
 
-                # Set running zones and schedules (if any)
-                self.running_zones = {valve["id"]: valve for valve in self.zones if valve.get("state", {}).get("reportedState", {}).get("lastWateringAction", {}).get("start")}
+                # --- ENHANCED: Detect running zones by reportedState ---
+                running_zones = {}
+                for valve in self.zones:
+                    valve_id = valve["id"]
+                    state = valve.get("state", {}).get("reportedState", {})
+                    # Check if valve is actively watering (OPEN or RUNNING or similar)
+                    is_running = False
+                    # Rachio API may use 'OPEN', 'RUNNING', or 'WATERING' for active, 'CLOSED' or 'OFF' for stopped
+                    if state.get("watering") is True or state.get("status") in ("OPEN", "RUNNING", "WATERING"):
+                        is_running = True
+                    # Fallback: if lastWateringAction has a start but no end, consider running
+                    last_action = state.get("lastWateringAction", {})
+                    if last_action.get("start") and not last_action.get("end"):
+                        is_running = True
+                    if is_running:
+                        running_zones[valve_id] = valve
+                self.running_zones = running_zones
+
+                # Set running schedules (if any)
                 self.running_schedules = {prog["id"]: prog for prog in self.schedules if prog.get("active", False)}
 
                 # Fetch and cache per-valve diagnostics
