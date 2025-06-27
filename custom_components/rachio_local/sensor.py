@@ -32,7 +32,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the Rachio sensors from config entry."""
     entities = []
-    entry_data = hass.data[DOMAIN][config_entry.entry_id]
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]["devices"]
 
     for device_id, data in entry_data.items():
         handler = data["handler"]
@@ -286,11 +286,26 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
         self._attr_unique_id = f"{handler.device_id}_api_calls"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        self._last_reset_value = None
+        self._last_reset_time = None
 
     @property
     def native_value(self):
-        # Always return the latest value from the handler, do not reset on reload
-        return self.handler.api_rate_limit
+        # Show API calls used in current window: rate_limit - rate_remaining
+        try:
+            limit = int(self.handler.api_rate_limit or 0)
+            remaining = int(self.handler.api_rate_remaining or 0)
+            used = limit - remaining
+            # Detect reset: if remaining == limit, reset used to 0
+            if self._last_reset_value is None or remaining > self._last_reset_value:
+                used = 0
+                self._last_reset_value = remaining
+                self._last_reset_time = datetime.now(timezone.utc)
+            else:
+                self._last_reset_value = remaining
+            return used
+        except Exception:
+            return 0
 
     @property
     def extra_state_attributes(self):
@@ -298,7 +313,7 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
         reset_local = None
         if reset_utc:
             try:
-                if reset_utc.isdigit():
+                if str(reset_utc).isdigit():
                     reset_dt = datetime.fromtimestamp(int(reset_utc), tz=timezone.utc)
                 else:
                     try:
@@ -331,9 +346,28 @@ class RachioPollingStatusSensor(RachioBaseEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # Try to get the global num_devices from hass.data
         num_devices = 1
-        if self.handler.coordinator and hasattr(self.handler.coordinator, 'num_devices'):
-            num_devices = self.handler.coordinator.num_devices
+        hass = None
+        if hasattr(self.handler, 'coordinator') and hasattr(self.handler.coordinator, 'hass'):
+            hass = self.handler.coordinator.hass
+        if hass is not None:
+            try:
+                # Find the entry where this device_id is in the devices dict
+                for eid, entry in hass.data.get(DOMAIN, {}).items():
+                    if (
+                        isinstance(entry, dict)
+                        and "devices" in entry
+                        and self.handler.device_id in entry["devices"]
+                        and "num_devices" in entry
+                    ):
+                        num_devices = entry["num_devices"]
+                        break
+            except Exception as e:
+                _LOGGER.debug(f"[PollingStatusSensor] Could not get global num_devices: {e}")
+        else:
+            if self.handler.coordinator and hasattr(self.handler.coordinator, 'num_devices'):
+                num_devices = self.handler.coordinator.num_devices
         interval = self.handler._get_update_interval().total_seconds()
         calls_per_poll = num_devices * 2
         max_calls_per_hour = 80

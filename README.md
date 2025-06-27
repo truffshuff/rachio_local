@@ -6,18 +6,14 @@
   <img src="images/rachio-local.png" alt="Rachio Local" width="400"/>
 </p>
 
-
 ---
 ## 💸 Donations Appreciated!
 If you find this plugin useful, please consider donating. Your support is greatly appreciated!
 
 [![Sponsor Me](https://img.shields.io/badge/Sponsor%20Me-%F0%9F%92%AA-purple?style=for-the-badge)](https://github.com/sponsors/biofects?frequency=recurring&sponsor=biofects)
 
-
-
 [![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=TWRQVYJWC77E6)
 ---
-
 
 ## 🔍 About this Plugin
  **Rachio Local** removes the need to open your home assistant to public network for incoming traffic. Rachio allows 1700 calls a day to API and I have done my best to prevent exhausting them
@@ -66,6 +62,10 @@ Whether schedules overlap
 - Schedule Management: Switches to control and monitor irrigation schedules, allowing start and stop of predefined watering schedules.
 - Last Watered Timestamp: Sensors that track and display the last time each zone was watered.
 - Periodic Data Polling: Automatic data updates every 5 minutes to keep Home Assistant synchronized with the Rachio device status.
+- **Dynamic Polling & Diagnostics:** Polling interval, device count, and API call usage are now exposed as Home Assistant sensors for full transparency and troubleshooting.
+- **Robust State Sync:** Zone and schedule sensors always reflect the true running state, even for manual runs started from the Rachio app.
+- **Multi-Device Support:** Improved logic for setups with multiple controllers and/or smart hose timers.
+- **Enhanced Logging:** Debug logs for all state transitions and API responses for easier troubleshooting.
 
 ## 🚨 Changelog
 

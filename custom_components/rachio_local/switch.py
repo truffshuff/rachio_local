@@ -78,7 +78,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Rachio switches from config entry."""
     entities = []
-    entry_data = hass.data[DOMAIN][config_entry.entry_id]
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]["devices"]
 
     for device_id, data in entry_data.items():
         handler = data["handler"]
