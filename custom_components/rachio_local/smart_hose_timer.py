@@ -131,12 +131,25 @@ class RachioSmartHoseTimerHandler:
                     data = await resp.json()
                     v = data.get("valve", {})
                     state = v.get("state", {}).get("reportedState", {})
-                    # Use lastStateUpdate as last watered
-                    last_watered = state.get("lastStateUpdate")
-                    if last_watered:
-                        self.valve_diagnostics_persist[valve_id] = last_watered
+
+                    # Get the last watering action
+                    last_watered = None
+                    last_action = state.get("lastWateringAction", {})
+                    
+                    # Only use the end timestamp if watering is complete
+                    if last_action.get("end"):
+                        last_watered = last_action.get("end")
+                    # If currently watering (has start but no end), keep previous timestamp
+                    elif last_action.get("start") and not last_action.get("end"):
+                        last_watered = self.valve_diagnostics_persist.get(valve_id)
+                    # Otherwise try to get from persist cache
                     else:
                         last_watered = self.valve_diagnostics_persist.get(valve_id)
+                    
+                    # Only update persist cache if we have a valid end timestamp
+                    if last_watered and last_action.get("end"):
+                        self.valve_diagnostics_persist[valve_id] = last_watered
+                    
                     diag = {
                         "lastWatered": last_watered,
                         "connected": state.get("connected"),
