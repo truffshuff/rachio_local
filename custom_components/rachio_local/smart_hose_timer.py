@@ -86,22 +86,54 @@ class RachioSmartHoseTimerHandler:
                 else:
                     self.schedules = []
 
-                # --- ENHANCED: Detect running zones by reportedState ---
+                # Detect running zones by calculating if lastWateringAction is still active
                 running_zones = {}
+                current_time = datetime.now()
+                
                 for valve in self.zones:
                     valve_id = valve["id"]
                     state = valve.get("state", {}).get("reportedState", {})
-                    # Check if valve is actively watering (OPEN or RUNNING or similar)
-                    is_running = False
-                    # Rachio API may use 'OPEN', 'RUNNING', or 'WATERING' for active, 'CLOSED' or 'OFF' for stopped
-                    if state.get("watering") is True or state.get("status") in ("OPEN", "RUNNING", "WATERING"):
-                        is_running = True
-                    # Fallback: if lastWateringAction has a start but no end, consider running
                     last_action = state.get("lastWateringAction", {})
-                    if last_action.get("start") and not last_action.get("end"):
-                        is_running = True
-                    if is_running:
-                        running_zones[valve_id] = valve
+
+                    # Check if there's a watering action with start time and duration
+                    if last_action.get("start") and last_action.get("durationSeconds"):
+                        try:
+                            # Parse the start time (ISO 8601 format)
+                            start_str = last_action["start"]
+                            # Handle both with and without milliseconds
+                            if "." in start_str:
+                                start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                            else:
+                                start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                            
+                            duration_seconds = int(last_action["durationSeconds"])
+                            end_time = start_time + timedelta(seconds=duration_seconds)
+                            
+                            # Add 30 second buffer for API lag
+                            end_time_buffer = end_time + timedelta(seconds=30)
+                            
+                            # Make current_time timezone-aware if start_time is
+                            if start_time.tzinfo is not None:
+                                current_time = datetime.now(start_time.tzinfo)
+                            else:
+                                current_time = datetime.now()
+                            
+                            # Check if currently watering
+                            if start_time <= current_time <= end_time_buffer:
+                                remaining_seconds = (end_time - current_time).total_seconds()
+                                running_zones[valve_id] = {
+                                    "id": valve_id,
+                                    "remaining": max(0, remaining_seconds)
+                                }
+                                _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining")
+                            elif current_time > end_time_buffer:
+                                # Watering has completed, record completion time
+                                if valve_id not in self._last_watering_completed:
+                                    self._last_watering_completed[valve_id] = end_time
+                                    _LOGGER.debug(f"Valve {valve_id} watering completed at {end_time}")
+                        except (ValueError, KeyError) as e:
+                            _LOGGER.warning(f"Error parsing watering times for valve {valve_id}: {e}")
+                
                 self.running_zones = running_zones
 
                 # Set running schedules (if any)
@@ -117,9 +149,8 @@ class RachioSmartHoseTimerHandler:
         """Fetch diagnostics for each valve using /valve/getValve/{id}."""
         if not self.zones:
             return
-        if not hasattr(self, 'valve_diagnostics_persist'):
-            self.valve_diagnostics_persist = {}
-        cache = {}
+            
+        cache = {}    
         for valve in self.zones:
             valve_id = valve["id"]
             url = f"{CLOUD_BASE_URL}/valve/getValve/{valve_id}"
@@ -132,21 +163,41 @@ class RachioSmartHoseTimerHandler:
                     v = data.get("valve", {})
                     state = v.get("state", {}).get("reportedState", {})
 
-                    # Get the last watering action
+                    # Get last watered timestamp
+                    # Use calculated completion time if available, otherwise use lastWateringAction.start + duration
                     last_watered = None
-                    last_action = state.get("lastWateringAction", {})
                     
-                    # Only use the end timestamp if watering is complete
-                    if last_action.get("end"):
-                        last_watered = last_action.get("end")
-                    # If currently watering (has start but no end), keep previous timestamp
-                    elif last_action.get("start") and not last_action.get("end"):
-                        last_watered = self.valve_diagnostics_persist.get(valve_id)
-                    # Otherwise try to get from persist cache
-                    else:
+                    # Option 1: Use our calculated completion time
+                    if valve_id in self._last_watering_completed:
+                        last_watered = self._last_watering_completed[valve_id].isoformat()
+                    
+                    # Option 2: Calculate from lastWateringAction
+                    if not last_watered:
+                        last_action = state.get("lastWateringAction", {})
+                        if last_action.get("start") and last_action.get("durationSeconds"):
+                            try:
+                                start_str = last_action["start"]
+                                if "." in start_str:
+                                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                                else:
+                                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                                
+                                duration_seconds = int(last_action["durationSeconds"])
+                                end_time = start_time + timedelta(seconds=duration_seconds)
+                                
+                                # Only use if in the past (watering completed)
+                                current_time = datetime.now(start_time.tzinfo) if start_time.tzinfo else datetime.now()
+                                if end_time < current_time:
+                                    last_watered = end_time.isoformat()
+                                    self._last_watering_completed[valve_id] = end_time
+                            except (ValueError, KeyError) as e:
+                                _LOGGER.warning(f"Error calculating last watered for valve {valve_id}: {e}")
+                    
+                    # Option 3: Use persisted value
+                    if not last_watered:
                         last_watered = self.valve_diagnostics_persist.get(valve_id)
                     
-                    # Only update persist cache if we have a valid end timestamp
+                    # Update persist cache if we have a valid timestamp
                     if last_watered and last_action.get("end"):
                         self.valve_diagnostics_persist[valve_id] = last_watered
                     
