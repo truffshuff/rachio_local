@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiohttp import ClientSession
 from .const import (
     CLOUD_BASE_URL,
@@ -34,19 +34,36 @@ class RachioSmartHoseTimerHandler:
         self.headers = {"Authorization": f"Bearer {api_key}"}
         self.coordinator = None
         self._pending_start = {}
-        self.valve_diagnostics = {}  # Cache for per-valve diagnostics
+        self._last_watering_completed = {}  # Track completed watering times
         self.api_call_count = 0
         self.api_rate_limit = None
         self.api_rate_remaining = None
         self.api_rate_reset = None
 
+         # Base station specific attributes
+        self.base_station_connected = False
+        self.base_station_firmware = None
+        self.base_station_wifi_firmware = None
+        self.base_station_serial = device_data.get("serialNumber")
+        self.base_station_mac = None
+        self.base_station_rssi = None
+
     async def _make_request(self, session, url: str) -> dict | None:
         try:
             async with session.get(url, headers=self.headers) as resp:
                 self.api_call_count += 1
-                self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
-                self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
-                self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
+
+                # Only update rate limit values if they're present (don't overwrite with None)
+                if "X-RateLimit-Limit" in resp.headers:
+                    self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
+                if "X-RateLimit-Remaining" in resp.headers:
+                    self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
+                if "X-RateLimit-Reset" in resp.headers:
+                    self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
+
+                # Log rate limit headers for debugging
+                _LOGGER.debug(f"[_make_request] Rate limit headers: Limit={self.api_rate_limit}, Remaining={self.api_rate_remaining}, Reset={self.api_rate_reset}")
+
                 if resp.status == 404:
                     _LOGGER.debug("%s: No data found at %s", self.name, url)
                     return None
@@ -65,10 +82,27 @@ class RachioSmartHoseTimerHandler:
                 data = await self._make_request(session, url)
                 if data:
                     self.device_data = data
-                    self.status = "ONLINE" if data.get("connected") else "OFFLINE"
+                    # Handle both single baseStation and array baseStations format
+                    base_stations = data.get("baseStations", [])
+                    if base_stations:
+                        base_station = base_stations[0]
+                    else:
+                        base_station = data.get("baseStation", {})
+
+                    state = base_station.get("reportedState", {})
+
+                    # Update base station attributes
+                    self.base_station_connected = state.get("connected", False)
+                    # Prefer bleHubFirmwareVersion, fall back to firmwareVersion
+                    self.base_station_firmware = state.get("bleHubFirmwareVersion") or state.get("firmwareVersion")
+                    self.base_station_wifi_firmware = state.get("wifiBridgeFirmwareVersion")
+                    self.base_station_mac = base_station.get("macAddress")
+                    self.base_station_rssi = state.get("rssi")
+                    self.status = "ONLINE" if state.get("connected") else "OFFLINE"
                 else:
                     self.device_data = {}
                     self.status = "OFFLINE"
+                    self.base_station_connected = False
 
                 # Get valves (zones)
                 url = f"{CLOUD_BASE_URL}{VALVE_LIST_VALVES_ENDPOINT.format(baseStationId=self.device_id)}"
@@ -138,78 +172,9 @@ class RachioSmartHoseTimerHandler:
 
                 # Set running schedules (if any)
                 self.running_schedules = {prog["id"]: prog for prog in self.schedules if prog.get("active", False)}
-
-                # Fetch and cache per-valve diagnostics
-                await self._update_valve_diagnostics(session)
         except Exception as err:
             _LOGGER.error("Error updating smart hose timer: %s", err)
             raise
-
-    async def _update_valve_diagnostics(self, session):
-        """Fetch diagnostics for each valve using /valve/getValve/{id}."""
-        if not self.zones:
-            return
-            
-        cache = {}    
-        for valve in self.zones:
-            valve_id = valve["id"]
-            url = f"{CLOUD_BASE_URL}/valve/getValve/{valve_id}"
-            try:
-                async with session.get(url, headers=self.headers) as resp:
-                    if resp.status != 200:
-                        _LOGGER.warning(f"Failed to fetch diagnostics for valve {valve_id}: %s", await resp.text())
-                        continue
-                    data = await resp.json()
-                    v = data.get("valve", {})
-                    state = v.get("state", {}).get("reportedState", {})
-
-                    # Get last watered timestamp
-                    # Use calculated completion time if available, otherwise use lastWateringAction.start + duration
-                    last_watered = None
-                    
-                    # Option 1: Use our calculated completion time
-                    if valve_id in self._last_watering_completed:
-                        last_watered = self._last_watering_completed[valve_id].isoformat()
-                    
-                    # Option 2: Calculate from lastWateringAction
-                    if not last_watered:
-                        last_action = state.get("lastWateringAction", {})
-                        if last_action.get("start") and last_action.get("durationSeconds"):
-                            try:
-                                start_str = last_action["start"]
-                                if "." in start_str:
-                                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                                else:
-                                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                                
-                                duration_seconds = int(last_action["durationSeconds"])
-                                end_time = start_time + timedelta(seconds=duration_seconds)
-                                
-                                # Only use if in the past (watering completed)
-                                current_time = datetime.now(start_time.tzinfo) if start_time.tzinfo else datetime.now()
-                                if end_time < current_time:
-                                    last_watered = end_time.isoformat()
-                                    self._last_watering_completed[valve_id] = end_time
-                            except (ValueError, KeyError) as e:
-                                _LOGGER.warning(f"Error calculating last watered for valve {valve_id}: {e}")
-                    
-                    # Option 3: Use persisted value
-                    if not last_watered:
-                        last_watered = self.valve_diagnostics_persist.get(valve_id)
-                    
-                    # Update persist cache if we have a valid timestamp
-                    if last_watered and last_action.get("end"):
-                        self.valve_diagnostics_persist[valve_id] = last_watered
-                    
-                    diag = {
-                        "lastWatered": last_watered,
-                        "connected": state.get("connected"),
-                        "batteryStatus": state.get("batteryStatus"),
-                    }
-                    cache[valve_id] = diag
-            except Exception as err:
-                _LOGGER.error(f"Error fetching diagnostics for valve {valve_id}: %s", err)
-        self.valve_diagnostics = cache
 
     async def async_start_zone(self, zone_id, duration=600):
         async with ClientSession() as session:
@@ -245,6 +210,8 @@ class RachioSmartHoseTimerHandler:
             async with session.put(url, headers=self.headers, json=payload) as resp:
                 _LOGGER.info("Stop response status: %s", resp.status)
                 if resp.status == 204:
+                    # Record completion time when manually stopped
+                    self._last_watering_completed[zone_id] = datetime.now(timezone.utc)
                     self.running_zones.pop(zone_id, None)
                     self._pending_start.pop(zone_id, None)
                     if self.coordinator:
@@ -253,6 +220,8 @@ class RachioSmartHoseTimerHandler:
                 resp.raise_for_status()
                 try:
                     result = await resp.json()
+                    # Record completion time when manually stopped
+                    self._last_watering_completed[zone_id] = datetime.now(timezone.utc)
                     self.running_zones.pop(zone_id, None)
                     self._pending_start.pop(zone_id, None)
                     if self.coordinator:
