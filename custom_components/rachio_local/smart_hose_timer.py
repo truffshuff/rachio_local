@@ -190,6 +190,19 @@ class RachioSmartHoseTimerHandler:
                         except (ValueError, KeyError) as e:
                             _LOGGER.warning(f"Error parsing watering times for valve {valve_id}: {e}")
 
+                # Merge API-detected running zones with optimistically-started zones
+                # This preserves valves we just started that the API hasn't caught up with yet
+                for zone_id, zone_data in list(self.running_zones.items()):
+                    # If a zone is in our current running_zones but not detected by API
+                    if zone_id not in running_zones:
+                        # Check if it's still in pending_start (within 60s window)
+                        if zone_id in self._pending_start:
+                            import time as time_module
+                            if self._pending_start[zone_id] > time_module.time():
+                                # Keep it in running_zones (API just hasn't caught up yet)
+                                running_zones[zone_id] = zone_data
+                                _LOGGER.debug(f"Valve {zone_id} keeping optimistic running state (still in pending window)")
+
                 self.running_zones = running_zones
 
                 # Set running schedules (if any)
@@ -197,6 +210,14 @@ class RachioSmartHoseTimerHandler:
         except Exception as err:
             _LOGGER.error("Error updating smart hose timer: %s", err)
             raise
+
+    def _is_valve_connected(self, zone_id):
+        """Check if a specific valve is connected to the base station."""
+        for valve in self.zones:
+            if valve["id"] == zone_id:
+                state = valve.get("state", {}).get("reportedState", {})
+                return state.get("connected", False)
+        return False
 
     async def async_start_zone(self, zone_id, duration=600):
         async with ClientSession() as session:
@@ -209,13 +230,25 @@ class RachioSmartHoseTimerHandler:
                 if resp.status >= 400:
                     _LOGGER.error("Start response text: %s", await resp.text())
                 if resp.status in (200, 204):
-                    self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
+                    # Always mark as pending (for optimistic UI updates)
+                    # But only add to running_zones if both base station AND valve are connected
                     self._pending_start[zone_id] = time.time() + 60
+                    valve_connected = self._is_valve_connected(zone_id)
+                    if self.base_station_connected and valve_connected:
+                        self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
+                        _LOGGER.debug(f"Valve {zone_id} start command sent - marked as running (base station and valve connected)")
+                    elif not self.base_station_connected:
+                        _LOGGER.warning(f"Valve {zone_id} start command sent but base station is offline - not marking as running")
+                    elif not valve_connected:
+                        _LOGGER.warning(f"Valve {zone_id} start command sent but valve is not connected - not marking as running")
                     return True
                 resp.raise_for_status()
                 try:
                     result = await resp.json()
-                    self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
+                    self._pending_start[zone_id] = time.time() + 60
+                    valve_connected = self._is_valve_connected(zone_id)
+                    if self.base_station_connected and valve_connected:
+                        self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
                     return result
                 except Exception:
                     return True
@@ -224,7 +257,68 @@ class RachioSmartHoseTimerHandler:
         # Immediately mark as force stopped to prevent race conditions
         now = datetime.now(timezone.utc)
         self._force_stopped[zone_id] = now
-        self._last_watering_completed[zone_id] = now
+
+        # Only update last_watering_completed if we can confirm the valve actually ran
+        # We check multiple conditions to avoid false positives:
+        # 1. Valve was in running_zones (API confirmed it was running) - SAFE to record
+        # 2. Valve was only in pending_start (optimistic state) - RISKY, need more checks
+        should_record = False
+
+        _LOGGER.debug(f"Valve {zone_id} stop check: in running_zones={zone_id in self.running_zones}, in pending_start={zone_id in self._pending_start}, running_zones={list(self.running_zones.keys())}, pending_start={self._pending_start}")
+
+        if zone_id in self.running_zones:
+            # Valve was confirmed running by API - safe to record
+            should_record = True
+            _LOGGER.debug(f"Valve {zone_id} was confirmed running - will record completion time")
+        elif zone_id in self._pending_start:
+            # Valve was only optimistically started - need to verify
+            # Only record if base station is currently connected, valve is connected, AND valve has recent activity
+            valve_connected = self._is_valve_connected(zone_id)
+            if self.base_station_connected and valve_connected:
+                # Check if valve has a recent lastWateringAction that started after we sent the command
+                valve_actually_started = False
+
+                # Check if we're still within the pending window (60 seconds after start command)
+                # If so, trust that the valve actually started even if API hasn't caught up
+                import time as time_module
+                if zone_id in self._pending_start and self._pending_start[zone_id] > time_module.time():
+                    # Still within 60-second window - assume valve actually started
+                    valve_actually_started = True
+                    pending_time_left = self._pending_start[zone_id] - time_module.time()
+                    _LOGGER.debug(f"Valve {zone_id} stopped within pending window ({pending_time_left:.0f}s remaining) - assuming it started")
+                else:
+                    # Outside pending window - need API confirmation
+                    for valve in self.zones:
+                        if valve["id"] == zone_id:
+                            state = valve.get("state", {}).get("reportedState", {})
+                            last_action = state.get("lastWateringAction", {})
+                            if last_action.get("start"):
+                                try:
+                                    start_str = last_action["start"]
+                                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                                    # If the last action started within the last 2 minutes, the valve likely actually ran
+                                    time_since_start = (now - start_time).total_seconds()
+                                    if 0 <= time_since_start <= 120:
+                                        valve_actually_started = True
+                                        _LOGGER.debug(f"Valve {zone_id} has recent API activity ({time_since_start:.0f}s ago) - will record completion time")
+                                        break
+                                except (ValueError, KeyError):
+                                    pass
+
+                should_record = valve_actually_started
+                if not valve_actually_started:
+                    _LOGGER.debug(f"Valve {zone_id} was pending but no recent API activity - not recording completion time")
+            elif not self.base_station_connected:
+                _LOGGER.debug(f"Valve {zone_id} was pending but base station is offline - not recording completion time")
+            elif not valve_connected:
+                _LOGGER.debug(f"Valve {zone_id} was pending but valve is not connected - not recording completion time")
+            else:
+                _LOGGER.debug(f"Valve {zone_id} was pending but connection checks failed - not recording completion time")
+
+        if should_record:
+            self._last_watering_completed[zone_id] = now
+            _LOGGER.debug(f"Valve {zone_id} stopped - recorded completion time")
+
         self.running_zones.pop(zone_id, None)
         self._pending_start.pop(zone_id, None)
         _LOGGER.debug(f"Force stopped valve {zone_id} - cleared all local state")
@@ -280,14 +374,24 @@ class RachioSmartHoseTimerHandler:
         return 600
 
     def is_zone_optimistically_on(self, zone_id):
-        # If we force stopped this valve, it's definitely off
-        if zone_id in self._force_stopped:
-            return False
-
         now = time.time()
-        return zone_id in self.running_zones or (
-            zone_id in self._pending_start and self._pending_start[zone_id] > now
-        )
+
+        # Check if we have a pending start that's still valid
+        has_pending_start = zone_id in self._pending_start and self._pending_start[zone_id] > now
+
+        # If we force stopped this valve, only consider it off if the stop was AFTER any pending start
+        if zone_id in self._force_stopped:
+            if has_pending_start:
+                # If there's a valid pending start that hasn't expired, the start happened more recently
+                pending_start_expiry = self._pending_start[zone_id]
+                if pending_start_expiry > now:  # pending start is still valid
+                    # This means start() was called after stop(), so the valve should be considered "on"
+                    return True
+            else:
+                # No valid pending start, and we have a force stop, so it's off
+                return False
+
+        return zone_id in self.running_zones or has_pending_start
 
     def _get_update_interval(self) -> timedelta:
         return get_update_interval(self)

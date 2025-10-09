@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -212,11 +213,25 @@ class RachioZoneLastWateredSensor(RachioBaseEntity, SensorEntity):
 class RachioValveStatusSensor(RachioZoneStatusSensor):
     """Sensor showing valve watering status."""
 
-class RachioValveLastWateredSensor(RachioZoneLastWateredSensor):
+class RachioValveLastWateredSensor(RachioZoneLastWateredSensor, RestoreEntity):
     """Sensor showing when the valve was last watered (Smart Hose Timer)."""
     def __init__(self, coordinator, handler, valve):
         super().__init__(coordinator, handler, valve)
         self.valve_id = valve["id"]
+        self._restored_last_watered = None
+
+    async def async_added_to_hass(self):
+        """Restore last watered time from state on startup."""
+        await super().async_added_to_hass()
+
+        # Try to restore the last state
+        if (last_state := await self.async_get_last_state()) is not None:
+            if last_state.state not in (None, "unknown", "unavailable"):
+                try:
+                    self._restored_last_watered = dt_util.parse_datetime(last_state.state)
+                    _LOGGER.debug(f"Restored last watered time for valve {self.valve_id}: {self._restored_last_watered}")
+                except (ValueError, TypeError) as e:
+                    _LOGGER.debug(f"Could not restore last watered time for valve {self.valve_id}: {e}")
 
     @property
     def native_value(self):
@@ -224,7 +239,7 @@ class RachioValveLastWateredSensor(RachioZoneLastWateredSensor):
         if hasattr(self.handler, "_last_watering_completed") and self.valve_id in self.handler._last_watering_completed:
             return dt_util.as_utc(self.handler._last_watering_completed[self.valve_id])
 
-        # Otherwise try to get from valve data
+        # Try to get from valve data
         for valve in self.handler.zones:
             if valve["id"] == self.valve_id:
                 reported_state = valve.get("state", {}).get("reportedState", {})
@@ -243,6 +258,10 @@ class RachioValveLastWateredSensor(RachioZoneLastWateredSensor):
                             return dt_util.as_utc(end_time)
                     except (ValueError, KeyError) as e:
                         _LOGGER.debug(f"Error parsing lastWateringAction for valve {self.valve_id}: {e}")
+
+        # Fall back to restored state if available
+        if self._restored_last_watered is not None:
+            return self._restored_last_watered
 
         return None
 

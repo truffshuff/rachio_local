@@ -41,6 +41,18 @@ def get_update_interval(handler) -> timedelta:
                 active = True
                 if schedule_remaining is None or schedule["remaining"] < schedule_remaining:
                     schedule_remaining = schedule["remaining"]
+
+    # Also check for pending starts (optimistic state)
+    if hasattr(handler, '_pending_start') and handler._pending_start:
+        import time as time_module
+        now = time_module.time()
+        for zone_id, expires_at in handler._pending_start.items():
+            if expires_at > now:
+                active = True
+                # Assume remaining time for pending starts (use 60 seconds as default)
+                pending_remaining = 60
+                if zone_remaining is None or pending_remaining < zone_remaining:
+                    zone_remaining = pending_remaining
     # Use zone remaining if available, else schedule, else idle
     remaining_secs = zone_remaining if zone_remaining is not None else schedule_remaining
     if not active or remaining_secs is None:
