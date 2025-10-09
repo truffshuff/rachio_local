@@ -17,6 +17,11 @@ A huge thank you to **@truffshuff** for these excellent improvements to Smart Ho
 - **API Call Optimization:** Enhanced API call tracking to read actual API calls from response headers when available
 - **Improved Polling:** Updated polling interval calculation to account for pending valve starts
 - **Reliability Improvements:** Prevented false positive time updates when base station or valves are disconnected
+- **Smart Hose Timer Program Sensors:** Added comprehensive program display with multi-valve support
+- **Enhanced Program Discovery:** Uses getValveDayViews endpoint to capture all programs including multi-valve schedules
+- **Rich Program Information:** Programs show schedule times, days of week, duration, valve associations, and colors
+- **User-Configurable Polling:** Added persistent, user-configurable polling intervals
+- **Improved API Efficiency:** Added POST request support and better program metadata extraction
 
 ### Bug Fixes
 - **Service Registration:** Fixed missing `rachio_local.turn_on` and `rachio_local.turn_off` service registration
