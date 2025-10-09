@@ -12,7 +12,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback, async_get_current_platform
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -100,6 +100,19 @@ async def async_setup_entry(
             # Note: Program switches removed - Smart Hose Timers run programs automatically
             # on their configured schedule. Program information is available as sensors instead.
     async_add_entities(entities)
+
+    # Register 'duration' as an optional parameter for turn_on, and register turn_off for custom stop
+    platform = async_get_current_platform()
+    platform.async_register_entity_service(
+        "turn_on",
+        {"duration": int},
+        "async_turn_on",
+    )
+    platform.async_register_entity_service(
+        "turn_off",
+        {},
+        "async_turn_off",
+    )
 
 class RachioSwitch(CoordinatorEntity, SwitchEntity):
     """Base class for Rachio switches."""
