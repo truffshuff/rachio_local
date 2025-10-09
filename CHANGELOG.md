@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## v2.4.0 (2025-10-09) - Smart Hose Timer Enhancement Release
+
+### 🎉 Major Contributions by [@truffshuff](https://github.com/truffshuff)
+A huge thank you to **@truffshuff** for these excellent improvements to Smart Hose Timer functionality and overall reliability!
+
+### Enhanced Smart Hose Timer Features
+- **Improved State Tracking:** Enhanced valve-level connection checks before marking zones as running
+- **Optimistic State Preservation:** Better handling of API lag during quick start/stop operations  
+- **Accurate Last Watered Times:** Fixed zone optimistic state detection when valves are force-stopped then restarted
+- **Persistent Last Watered:** Last watered times now persist across Home Assistant restarts using RestoreEntity
+- **Enhanced Stop Logic:** Better verification of actual valve operations before recording completion times
+- **Connection Status Monitoring:** Added diagnostic sensors for base station connectivity and detailed valve status
+- **API Call Optimization:** Enhanced API call tracking to read actual API calls from response headers when available
+- **Improved Polling:** Updated polling interval calculation to account for pending valve starts
+- **Reliability Improvements:** Prevented false positive time updates when base station or valves are disconnected
+
+### Bug Fixes
+- **Service Registration:** Fixed missing `rachio_local.turn_on` and `rachio_local.turn_off` service registration
+- **Switch Logic:** Updated switch logic to better reflect actual state when manually stopping zones
+
 ## v2.3.1 (2025-06-27)
 - Fix: Smart Hose Timer switch and sensor now correctly reflect stopped state when stopped from either the app or Home Assistant.
 - Improved: Enhanced polling logic for Smart Hose Timer to detect active/inactive valves based on reported state and last watering action.
