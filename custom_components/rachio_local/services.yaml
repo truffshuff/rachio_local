@@ -1,0 +1,30 @@
+# Entity services registered programmatically in switch.py
+# These services are available on all switch entities in this integration
+
+turn_on:
+  name: Turn On
+  description: Turn on a zone, valve, or schedule with optional duration parameter
+  target:
+    entity:
+      integration: rachio_local
+      domain: switch
+  fields:
+    duration:
+      name: Duration
+      description: Duration in seconds to run the zone/valve
+      required: false
+      example: 600
+      selector:
+        number:
+          min: 60
+          max: 3600
+          step: 60
+          unit_of_measurement: seconds
+
+turn_off:
+  name: Turn Off  
+  description: Turn off a zone, valve, or schedule
+  target:
+    entity:
+      integration: rachio_local
+      domain: switch
