@@ -41,6 +41,10 @@ class RachioSmartHoseTimerHandler:
         self.api_rate_remaining = None
         self.api_rate_reset = None
 
+        # Configurable polling intervals (in seconds)
+        self.idle_polling_interval = 300  # 5 minutes when idle
+        self.active_polling_interval = 120  # 2 minutes when actively watering
+
          # Base station specific attributes
         self.base_station_connected = False
         self.base_station_firmware = None

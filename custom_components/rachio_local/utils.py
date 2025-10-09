@@ -49,18 +49,33 @@ def get_update_interval(handler) -> timedelta:
         for zone_id, expires_at in handler._pending_start.items():
             if expires_at > now:
                 active = True
-                # Assume remaining time for pending starts (use 60 seconds as default)
-                pending_remaining = 60
+                # Get the actual remaining time from running_zones if available
+                # (which contains the duration we sent when starting the zone)
+                if zone_id in handler.running_zones:
+                    pending_remaining = handler.running_zones[zone_id].get("remaining", 600)
+                else:
+                    # Fallback: try to get default duration from zone attributes
+                    if hasattr(handler, 'get_zone_default_duration'):
+                        pending_remaining = handler.get_zone_default_duration(zone_id)
+                    else:
+                        pending_remaining = 600  # Ultimate fallback: 10 minutes
+
                 if zone_remaining is None or pending_remaining < zone_remaining:
                     zone_remaining = pending_remaining
     # Use zone remaining if available, else schedule, else idle
     remaining_secs = zone_remaining if zone_remaining is not None else schedule_remaining
+
+    # Get configurable polling intervals (with defaults)
+    idle_interval = getattr(handler, 'idle_polling_interval', 300)
+    active_interval = getattr(handler, 'active_polling_interval', 120)
+
     if not active or remaining_secs is None:
-        return timedelta(minutes=5)
+        return timedelta(seconds=idle_interval)
+
+    # When actively watering, use the active polling interval
+    # For very short remaining times (< 2 minutes), poll more frequently
     remaining_mins = remaining_secs / 60
-    if remaining_mins >= 10:
-        return timedelta(minutes=5)
-    elif remaining_mins >= 1:
-        return timedelta(minutes=2)
+    if remaining_mins < 2:
+        return timedelta(seconds=min(active_interval, 60))
     else:
-        return timedelta(seconds=60)
+        return timedelta(seconds=active_interval)

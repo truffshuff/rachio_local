@@ -48,6 +48,10 @@ class RachioControllerHandler:
         self.api_rate_remaining = None
         self.api_rate_reset = None
 
+        # Configurable polling intervals (in seconds)
+        self.idle_polling_interval = 300  # 5 minutes when idle
+        self.active_polling_interval = 120  # 2 minutes when actively watering
+
     async def _make_request(self, session, url: str) -> dict | None:
         try:
             async with session.get(url, headers=self.headers) as resp:
