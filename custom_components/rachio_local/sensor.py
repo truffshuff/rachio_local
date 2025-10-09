@@ -80,6 +80,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     RachioValveRSSISensor(coordinator, handler, valve),
                 ])
                 _LOGGER.debug(f"Added valve sensors for {valve.get('name', valve.get('id'))}")
+
+            # Add program sensors for Smart Hose Timers
+            for program in handler.schedules:
+                entities.append(RachioSmartHoseTimerProgramSensor(coordinator, handler, program))
+                _LOGGER.debug(f"Added program sensor for {program.get('name', program.get('id'))}")
     _LOGGER.info(f"Adding {len(entities)} Rachio sensor entities: {[e.name for e in entities]}")
     async_add_entities(entities)
 
@@ -735,3 +740,116 @@ class RachioBaseStationRSSISensor(RachioBaseEntity, SensorEntity):
         return {
             "signal_strength": reported_state.get("rssiSignalStrength"),
         }
+
+class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
+    """Sensor for a Smart Hose Timer program/schedule - read-only display."""
+
+    def __init__(self, coordinator, handler, program):
+        """Initialize the program sensor."""
+        super().__init__(coordinator, handler)
+        self.program = program
+        self.program_id = program.get("id")
+        program_name = program.get("name", f"Program {self.program_id[:8]}")
+
+        self._attr_name = f"Program: {program_name}"
+        self._attr_unique_id = f"{handler.device_id}_program_{self.program_id}"
+        self._attr_icon = "mdi:calendar-clock"
+
+    @property
+    def native_value(self):
+        """Return the state of the program."""
+        # Find the current program data from handler.schedules
+        current_program = None
+        for schedule in self.handler.schedules:
+            if schedule.get("id") == self.program_id:
+                current_program = schedule
+                break
+
+        if not current_program:
+            return "unavailable"
+
+        # Check if program is enabled
+        enabled = current_program.get("enabled", False)
+        if not enabled:
+            return "disabled"
+
+        # Check if program is currently active (running)
+        active = current_program.get("active", False)
+        if active:
+            return "running"
+
+        return "scheduled"
+
+    @property
+    def extra_state_attributes(self):
+        """Return program details as attributes."""
+        # Find the current program data from handler.schedules
+        current_program = None
+        for schedule in self.handler.schedules:
+            if schedule.get("id") == self.program_id:
+                current_program = schedule
+                break
+
+        if not current_program:
+            return {}
+
+        attributes = {
+            "program_id": self.program_id,
+            "name": current_program.get("name", "Unknown"),
+            "enabled": current_program.get("enabled", False),
+            "active": current_program.get("active", False),
+        }
+
+        # Add valve information
+        valve_ids = current_program.get("valveIds", [])
+        if valve_ids:
+            valve_names = []
+            for valve_id in valve_ids:
+                for valve in self.handler.zones:
+                    if valve.get("id") == valve_id:
+                        valve_names.append(valve.get("name", "Unknown"))
+                        break
+            attributes["valve_names"] = ", ".join(valve_names) if valve_names else "Unknown"
+            attributes["valve_ids"] = valve_ids
+
+        # Add schedule information
+        if "schedule" in current_program:
+            schedule = current_program["schedule"]
+            attributes["schedule_type"] = schedule.get("type", "Unknown")
+
+            # Add start times
+            if "startTimes" in schedule:
+                start_times = schedule["startTimes"]
+                if start_times:
+                    # Format start times nicely
+                    formatted_times = []
+                    for st in start_times:
+                        if isinstance(st, dict):
+                            hour = st.get("hour", 0)
+                            minute = st.get("minute", 0)
+                            formatted_times.append(f"{hour:02d}:{minute:02d}")
+                    if formatted_times:
+                        attributes["start_times"] = ", ".join(formatted_times)
+
+            # Add days of week if applicable
+            if "daysOfWeek" in schedule:
+                days_of_week = schedule["daysOfWeek"]
+                if days_of_week:
+                    day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                    selected_days = [day_names[i] for i, enabled in enumerate(days_of_week) if enabled]
+                    attributes["days_of_week"] = ", ".join(selected_days) if selected_days else "None"
+
+        # Add duration
+        duration_seconds = current_program.get("durationSeconds")
+        if duration_seconds:
+            minutes = duration_seconds // 60
+            attributes["duration_minutes"] = minutes
+            attributes["duration_seconds"] = duration_seconds
+
+        # Add creation/update timestamps
+        if "createdAt" in current_program:
+            attributes["created_at"] = current_program["createdAt"]
+        if "updatedAt" in current_program:
+            attributes["updated_at"] = current_program["updatedAt"]
+
+        return attributes

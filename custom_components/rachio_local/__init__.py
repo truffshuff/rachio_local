@@ -24,7 +24,6 @@ from .const import (
     DEVICE_CURRENT_SCHEDULE,
     VALVE_GET_BASE_STATION_ENDPOINT,
     VALVE_LIST_VALVES_ENDPOINT,
-    PROGRAM_LIST_PROGRAMS_ENDPOINT,
     ZONE_START,
     ZONE_STOP,
     VALVE_START,
@@ -102,7 +101,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
-                handler = RachioSmartHoseTimerHandler(api_key, device)
+                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id)
             else:
                 handler = RachioControllerHandler(api_key, device)
 

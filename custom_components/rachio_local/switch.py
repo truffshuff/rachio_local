@@ -97,8 +97,8 @@ async def async_setup_entry(
         elif handler.type == DEVICE_TYPE_SMART_HOSE_TIMER:
             for valve in handler.zones:
                 entities.append(RachioValveSwitch(coordinator, handler, valve))
-            for program in handler.schedules:
-                entities.append(RachioTimerProgramSwitch(coordinator, handler, program))
+            # Note: Program switches removed - Smart Hose Timers run programs automatically
+            # on their configured schedule. Program information is available as sensors instead.
     async_add_entities(entities)
 
 class RachioSwitch(CoordinatorEntity, SwitchEntity):

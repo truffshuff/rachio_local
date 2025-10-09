@@ -9,7 +9,7 @@ from .const import (
     CLOUD_BASE_URL,
     VALVE_GET_BASE_STATION_ENDPOINT,
     VALVE_LIST_VALVES_ENDPOINT,
-    PROGRAM_LIST_PROGRAMS_ENDPOINT,
+    SUMMARY_VALVE_VIEWS,
     VALVE_START,
     VALVE_STOP,
     PROGRAM_GET,
@@ -19,10 +19,11 @@ from .utils import get_update_interval
 _LOGGER = logging.getLogger(__name__)
 
 class RachioSmartHoseTimerHandler:
-    def __init__(self, api_key: str, device_data: dict) -> None:
+    def __init__(self, api_key: str, device_data: dict, user_id: str = None) -> None:
         self.api_key = api_key
         self.device_data = device_data
         self.device_id = device_data["id"]
+        self.user_id = user_id  # Store user_id for program queries
         self.type = device_data.get("device_type")
         self.name = device_data.get("name") or device_data.get("serialNumber") or "Smart Hose Timer"
         self.model = device_data.get("model", "")
@@ -53,30 +54,38 @@ class RachioSmartHoseTimerHandler:
         self.base_station_mac = None
         self.base_station_rssi = None
 
-    async def _make_request(self, session, url: str) -> dict | None:
+    async def _make_request(self, session, url: str, method: str = "GET", json_data: dict = None) -> dict | None:
         try:
-            async with session.get(url, headers=self.headers) as resp:
-                self.api_call_count += 1
-
-                # Only update rate limit values if they're present (don't overwrite with None)
-                if "X-RateLimit-Limit" in resp.headers:
-                    self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
-                if "X-RateLimit-Remaining" in resp.headers:
-                    self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
-                if "X-RateLimit-Reset" in resp.headers:
-                    self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
-
-                # Log rate limit headers for debugging
-                _LOGGER.debug(f"[_make_request] Rate limit headers: Limit={self.api_rate_limit}, Remaining={self.api_rate_remaining}, Reset={self.api_rate_reset}")
-
-                if resp.status == 404:
-                    _LOGGER.debug("%s: No data found at %s", self.name, url)
-                    return None
-                resp.raise_for_status()
-                return await resp.json()
+            if method == "POST":
+                async with session.post(url, headers=self.headers, json=json_data) as resp:
+                    return await self._process_response(resp, url)
+            else:
+                async with session.get(url, headers=self.headers) as resp:
+                    return await self._process_response(resp, url)
         except Exception as err:
             _LOGGER.error("Error in _make_request: %s", err)
             return None
+
+    async def _process_response(self, resp, url: str) -> dict | None:
+        """Process API response and extract rate limit headers."""
+        self.api_call_count += 1
+
+        # Only update rate limit values if they're present (don't overwrite with None)
+        if "X-RateLimit-Limit" in resp.headers:
+            self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
+        if "X-RateLimit-Remaining" in resp.headers:
+            self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
+        if "X-RateLimit-Reset" in resp.headers:
+            self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
+
+        # Log rate limit headers for debugging
+        _LOGGER.debug(f"[_make_request] Rate limit headers: Limit={self.api_rate_limit}, Remaining={self.api_rate_remaining}, Reset={self.api_rate_reset}")
+
+        if resp.status == 404:
+            _LOGGER.debug("%s: No data found at %s", self.name, url)
+            return None
+        resp.raise_for_status()
+        return await resp.json()
 
     async def async_update(self) -> None:
         try:
@@ -117,13 +126,62 @@ class RachioSmartHoseTimerHandler:
                 else:
                     self.zones = []
 
-                # Get programs (schedules)
-                url = f"{CLOUD_BASE_URL}{PROGRAM_LIST_PROGRAMS_ENDPOINT.format(baseStationId=self.device_id)}"
-                data = await self._make_request(session, url)
-                if data:
-                    self.schedules = data.get("programs", [])
+                # Get programs (schedules) using getValveDayViews summary API
+                # This API returns program information including multi-valve programs
+                # Query the next 7 days to get scheduled program information
+                url = f"{CLOUD_BASE_URL}/{SUMMARY_VALVE_VIEWS}"
+                today = datetime.now()
+                # Query 1 day in the past and 7 days in the future to capture all active programs
+                start_date = today - timedelta(days=1)
+                end_date = today + timedelta(days=7)
+
+                payload = {
+                    "start": {
+                        "year": start_date.year,
+                        "month": start_date.month,
+                        "day": start_date.day
+                    },
+                    "end": {
+                        "year": end_date.year,
+                        "month": end_date.month,
+                        "day": end_date.day
+                    },
+                    "resourceId": {
+                        "baseStationId": self.device_id
+                    }
+                }
+
+                data = await self._make_request(session, url, method="POST", json_data=payload)
+
+                # Extract unique programs from the summary data
+                programs_map = {}  # programId -> program info
+                if data and "valveDayViews" in data:
+                    for day_view in data["valveDayViews"]:
+                        for program_run in day_view.get("valveProgramRunSummaries", []):
+                            program_id = program_run.get("programId")
+                            if program_id and program_id not in programs_map:
+                                # Build valve list for this program
+                                valve_ids = []
+                                for valve_run in program_run.get("valveRunSummaries", []):
+                                    valve_id = valve_run.get("valveId")
+                                    if valve_id and valve_id not in valve_ids:
+                                        valve_ids.append(valve_id)
+
+                                programs_map[program_id] = {
+                                    "id": program_id,
+                                    "name": program_run.get("programName", "Unknown Program"),
+                                    "valveIds": valve_ids,
+                                    "active": False,  # Will be determined by running zones
+                                    "enabled": True,  # Assume enabled if in schedule
+                                    "programColor": program_run.get("programColor", "#00A7E1"),
+                                    "skippable": program_run.get("skippable", False),
+                                }
+
+                self.schedules = list(programs_map.values())
+                if self.schedules:
+                    _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
                 else:
-                    self.schedules = []
+                    _LOGGER.debug(f"No programs configured for device {self.device_id}")
 
                 # Detect running zones by calculating if lastWateringAction is still active
                 running_zones = {}
