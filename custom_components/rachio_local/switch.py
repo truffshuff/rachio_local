@@ -1,6 +1,7 @@
 """Support for Rachio switches."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone, timedelta
@@ -150,21 +151,25 @@ class RachioZoneSwitch(RachioSwitch):
         if duration is None:
             duration = self.handler.get_zone_default_duration(self.zone_id)
         await self.handler.async_start_zone(self.zone_id, duration=duration)
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()  # Update UI immediately
+        # Schedule refresh after 5 seconds to allow API to catch up
+        asyncio.create_task(self._delayed_refresh(5))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        # Debug: Log before attempting to stop
-        _LOGGER.debug(f"[ZoneSwitch] async_turn_off: zone_id={self.zone_id}, is_on={self.is_on}")
-        if self.is_on:
-            await self.handler.async_stop_zone(self.zone_id)
-            # Clear any pending optimistic state for this zone
-            if hasattr(self.handler, '_pending_start'):
-                self.handler._pending_start.pop(self.zone_id, None)
-                self.handler._pending_start.pop(str(self.zone_id), None)
-            await self.coordinator.async_request_refresh()
-        else:
-            _LOGGER.debug(f"[ZoneSwitch] async_turn_off: zone_id={self.zone_id} not running, skipping stop.")
+        _LOGGER.debug(f"[ZoneSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Always call async_stop_zone - it will handle whether the zone is actually running
+        # We need to clear optimistic state even if the zone isn't actually running
+        await self.handler.async_stop_zone(self.zone_id)
+        # async_stop_zone already clears running_zones and _pending_start
+        self.async_write_ha_state()  # Update UI immediately
+        # Schedule refresh after 5 seconds to allow API to catch up
+        asyncio.create_task(self._delayed_refresh(5))
+
+    async def _delayed_refresh(self, delay: int) -> None:
+        """Refresh coordinator after a delay."""
+        await asyncio.sleep(delay)
+        await self.coordinator.async_request_refresh()
 
 class RachioScheduleSwitch(RachioSwitch):
     """Representation of a schedule switch."""
@@ -200,8 +205,8 @@ class RachioValveSwitch(RachioZoneSwitch):
 
     @property
     def is_on(self):
-        """Return if the valve is on (true API state, not just optimistic)."""
-        return self.zone_id in self.handler.running_zones
+        """Return if the valve is on (using optimistic state)."""
+        return self.handler.is_zone_optimistically_on(self.zone_id)
 
     @property
     def extra_state_attributes(self):
@@ -216,7 +221,20 @@ class RachioValveSwitch(RachioZoneSwitch):
         if duration is None:
             duration = self.handler.get_zone_default_duration(self.zone_id)
         await self.handler.async_start_zone(self.zone_id, duration=duration)
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()  # Update UI immediately
+        # Schedule refresh after 5 seconds to allow API to catch up
+        asyncio.create_task(self._delayed_refresh(5))
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the switch off."""
+        _LOGGER.debug(f"[ValveSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Always call async_stop_zone - it will handle whether the valve is actually running
+        # We need to clear optimistic state even if the valve isn't actually running
+        await self.handler.async_stop_zone(self.zone_id)
+        # async_stop_zone already clears running_zones and _pending_start
+        self.async_write_ha_state()  # Update UI immediately
+        # Schedule refresh after 5 seconds to allow API to catch up
+        asyncio.create_task(self._delayed_refresh(5))
 
 class RachioTimerProgramSwitch(RachioScheduleSwitch):
     """Representation of a valve program switch."""

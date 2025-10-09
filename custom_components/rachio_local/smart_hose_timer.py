@@ -35,6 +35,7 @@ class RachioSmartHoseTimerHandler:
         self.coordinator = None
         self._pending_start = {}
         self._last_watering_completed = {}  # Track completed watering times
+        self._force_stopped = {}  # Track valves we've force stopped (zone_id -> timestamp)
         self.api_call_count = 0
         self.api_rate_limit = None
         self.api_rate_remaining = None
@@ -123,7 +124,7 @@ class RachioSmartHoseTimerHandler:
                 # Detect running zones by calculating if lastWateringAction is still active
                 running_zones = {}
                 current_time = datetime.now()
-                
+
                 for valve in self.zones:
                     valve_id = valve["id"]
                     state = valve.get("state", {}).get("reportedState", {})
@@ -139,19 +140,40 @@ class RachioSmartHoseTimerHandler:
                                 start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                             else:
                                 start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                            
+
                             duration_seconds = int(last_action["durationSeconds"])
                             end_time = start_time + timedelta(seconds=duration_seconds)
-                            
+
                             # Add 30 second buffer for API lag
                             end_time_buffer = end_time + timedelta(seconds=30)
-                            
+
                             # Make current_time timezone-aware if start_time is
                             if start_time.tzinfo is not None:
                                 current_time = datetime.now(start_time.tzinfo)
                             else:
                                 current_time = datetime.now()
-                            
+
+                            # Check if we force stopped this valve recently (within last 30 seconds)
+                            # This prevents race conditions where coordinator updates overwrite manual stops
+                            if valve_id in self._force_stopped:
+                                force_stop_time = self._force_stopped[valve_id]
+                                time_since_stop = (current_time - force_stop_time).total_seconds()
+                                if time_since_stop < 30:  # Ignore API data for 30 seconds after force stop
+                                    _LOGGER.debug(f"Valve {valve_id} force stopped {time_since_stop:.0f}s ago, ignoring API data")
+                                    continue
+                                else:
+                                    # Clear old force stop tracking
+                                    self._force_stopped.pop(valve_id, None)
+
+                            # Check if we manually stopped this valve recently
+                            # If so, ignore stale API data showing it's still running
+                            if valve_id in self._last_watering_completed:
+                                last_completed = self._last_watering_completed[valve_id]
+                                # If the API action ended before our manual stop, ignore it
+                                if end_time <= last_completed:
+                                    _LOGGER.debug(f"Valve {valve_id} ignoring stale API data (ended {end_time} vs stopped {last_completed})")
+                                    continue
+
                             # Check if currently watering
                             if start_time <= current_time <= end_time_buffer:
                                 remaining_seconds = (end_time - current_time).total_seconds()
@@ -167,7 +189,7 @@ class RachioSmartHoseTimerHandler:
                                     _LOGGER.debug(f"Valve {valve_id} watering completed at {end_time}")
                         except (ValueError, KeyError) as e:
                             _LOGGER.warning(f"Error parsing watering times for valve {valve_id}: {e}")
-                
+
                 self.running_zones = running_zones
 
                 # Set running schedules (if any)
@@ -189,44 +211,38 @@ class RachioSmartHoseTimerHandler:
                 if resp.status in (200, 204):
                     self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
                     self._pending_start[zone_id] = time.time() + 60
-                    if self.coordinator:
-                        await self.coordinator.async_request_refresh()
                     return True
                 resp.raise_for_status()
                 try:
                     result = await resp.json()
                     self.running_zones[zone_id] = {"id": zone_id, "remaining": duration}
-                    if self.coordinator:
-                        await self.coordinator.async_request_refresh()
                     return result
                 except Exception:
                     return True
 
     async def async_stop_zone(self, zone_id):
+        # Immediately mark as force stopped to prevent race conditions
+        now = datetime.now(timezone.utc)
+        self._force_stopped[zone_id] = now
+        self._last_watering_completed[zone_id] = now
+        self.running_zones.pop(zone_id, None)
+        self._pending_start.pop(zone_id, None)
+        _LOGGER.debug(f"Force stopped valve {zone_id} - cleared all local state")
+
+        # Now make the API call
         async with ClientSession() as session:
             url = f"{CLOUD_BASE_URL}/{VALVE_STOP}"
             payload = {"valveId": zone_id}
             _LOGGER.info("Stopping valve: %s with payload: %s", url, payload)
             async with session.put(url, headers=self.headers, json=payload) as resp:
                 _LOGGER.info("Stop response status: %s", resp.status)
-                if resp.status == 204:
-                    # Record completion time when manually stopped
-                    self._last_watering_completed[zone_id] = datetime.now(timezone.utc)
-                    self.running_zones.pop(zone_id, None)
-                    self._pending_start.pop(zone_id, None)
-                    if self.coordinator:
-                        await self.coordinator.async_request_refresh()
-                    return True
                 resp.raise_for_status()
+
+                # Try to parse response
+                if resp.status == 204:
+                    return True
                 try:
-                    result = await resp.json()
-                    # Record completion time when manually stopped
-                    self._last_watering_completed[zone_id] = datetime.now(timezone.utc)
-                    self.running_zones.pop(zone_id, None)
-                    self._pending_start.pop(zone_id, None)
-                    if self.coordinator:
-                        await self.coordinator.async_request_refresh()
-                    return result
+                    return await resp.json()
                 except Exception:
                     return True
 
@@ -264,6 +280,10 @@ class RachioSmartHoseTimerHandler:
         return 600
 
     def is_zone_optimistically_on(self, zone_id):
+        # If we force stopped this valve, it's definitely off
+        if zone_id in self._force_stopped:
+            return False
+
         now = time.time()
         return zone_id in self.running_zones or (
             zone_id in self._pending_start and self._pending_start[zone_id] > now
