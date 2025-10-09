@@ -24,7 +24,6 @@ from .const import (
     DEVICE_CURRENT_SCHEDULE,
     VALVE_GET_BASE_STATION_ENDPOINT,
     VALVE_LIST_VALVES_ENDPOINT,
-    PROGRAM_LIST_PROGRAMS_ENDPOINT,
     ZONE_START,
     ZONE_STOP,
     VALVE_START,
@@ -36,7 +35,7 @@ from .controller import RachioControllerHandler
 from .smart_hose_timer import RachioSmartHoseTimerHandler
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER]
 
 
 async def _handle_request(session, method: str, url: str, headers: dict) -> dict:
@@ -102,9 +101,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
-                handler = RachioSmartHoseTimerHandler(api_key, device)
+                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id)
             else:
                 handler = RachioControllerHandler(api_key, device)
+
+            # Load saved polling intervals from config entry options
+            idle_key = f"idle_polling_interval_{device_id}"
+            active_key = f"active_polling_interval_{device_id}"
+            if idle_key in entry.options:
+                handler.idle_polling_interval = entry.options[idle_key]
+                _LOGGER.info(f"Loaded idle polling interval for {handler.name}: {entry.options[idle_key]}s")
+            if active_key in entry.options:
+                handler.active_polling_interval = entry.options[active_key]
+                _LOGGER.info(f"Loaded active polling interval for {handler.name}: {entry.options[active_key]}s")
 
             handler._fast_poll_count = 0  # Track fast polls
             handler._max_fast_polls = 3   # Max number of 30s polls

@@ -125,7 +125,17 @@ My Home Assistant runs in Docker on a server. I don't use the supervised version
 
 ---
 
-## 🐛 Support & Issues
+## � Contributors
+
+Special thanks to the amazing contributors who have helped improve this project:
+
+- **[@truffshuff](https://github.com/truffshuff)** - Major Smart Hose Timer enhancements, improved state tracking, persistent last watered times, enhanced diagnostics, and API optimization improvements. 🎉
+
+We appreciate all contributions, bug reports, and feature requests from the community!
+
+---
+
+## �🐛 Support & Issues
 If you encounter bugs or have feature requests, feel free to [open an issue](https://github.com/biofects/rachio_local/issues) on the GitHub repository.
 
 ---

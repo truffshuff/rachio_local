@@ -48,13 +48,23 @@ class RachioControllerHandler:
         self.api_rate_remaining = None
         self.api_rate_reset = None
 
+        # Configurable polling intervals (in seconds)
+        self.idle_polling_interval = 300  # 5 minutes when idle
+        self.active_polling_interval = 120  # 2 minutes when actively watering
+
     async def _make_request(self, session, url: str) -> dict | None:
         try:
             async with session.get(url, headers=self.headers) as resp:
                 self.api_call_count = int(resp.headers.get("X-RateLimit-Limit", self.api_call_count) or 0)
-                self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
-                self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
-                self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
+
+                # Only update rate limit values if they're present (don't overwrite with None)
+                if "X-RateLimit-Limit" in resp.headers:
+                    self.api_rate_limit = resp.headers.get("X-RateLimit-Limit")
+                if "X-RateLimit-Remaining" in resp.headers:
+                    self.api_rate_remaining = resp.headers.get("X-RateLimit-Remaining")
+                if "X-RateLimit-Reset" in resp.headers:
+                    self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
+
                 if resp.status == 404:
                     _LOGGER.debug("%s: No data found at %s", self.name, url)
                     return None
