@@ -46,6 +46,10 @@ class RachioSmartHoseTimerHandler:
         self.idle_polling_interval = 300  # 5 minutes when idle
         self.active_polling_interval = 120  # 2 minutes when actively watering
 
+        # Run history summaries (populated from API)
+        self.valve_run_summaries = {}  # valve_id -> {previous_run: {...}, next_run: {...}}
+        self.program_run_summaries = {}  # program_id -> {previous_run: {...}, next_run: {...}}
+
          # Base station specific attributes
         self.base_station_connected = False
         self.base_station_firmware = None
@@ -154,32 +158,197 @@ class RachioSmartHoseTimerHandler:
                 data = await self._make_request(session, url, method="POST", json_data=payload)
 
                 # Extract unique programs from the summary data
+                # Also parse run summaries for valves and programs
                 programs_map = {}  # programId -> program info
+                valve_run_history = {}  # valve_id -> list of runs
+                program_run_history = {}  # program_id -> list of runs
+                current_time = datetime.now(timezone.utc)
+
                 if data and "valveDayViews" in data:
                     for day_view in data["valveDayViews"]:
+                        # Process program runs
                         for program_run in day_view.get("valveProgramRunSummaries", []):
                             program_id = program_run.get("programId")
-                            if program_id and program_id not in programs_map:
-                                # Build valve list for this program
-                                valve_ids = []
+                            if program_id:
+                                # Store program info
+                                if program_id not in programs_map:
+                                    # Build valve list for this program
+                                    valve_ids = []
+                                    for valve_run in program_run.get("valveRunSummaries", []):
+                                        valve_id = valve_run.get("valveId")
+                                        if valve_id and valve_id not in valve_ids:
+                                            valve_ids.append(valve_id)
+
+                                    programs_map[program_id] = {
+                                        "id": program_id,
+                                        "name": program_run.get("programName", "Unknown Program"),
+                                        "valveIds": valve_ids,
+                                        "active": False,  # Will be determined by running zones
+                                        "enabled": True,  # Assume enabled if in schedule
+                                        "programColor": program_run.get("programColor", "#00A7E1"),
+                                        "skippable": program_run.get("skippable", False),
+                                    }
+
+                                # Store program run history
+                                if program_id not in program_run_history:
+                                    program_run_history[program_id] = []
+
+                                start_str = program_run.get("start")
+                                if start_str:
+                                    try:
+                                        start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+
+                                        # Determine if this is a past or future run
+                                        is_future = start_time > current_time
+
+                                        # Extract all valve runs for this program
+                                        total_duration = 0
+                                        all_skipped = True
+                                        skip_info = None
+
+                                        for valve_run in program_run.get("valveRunSummaries", []):
+                                            duration = valve_run.get("durationSeconds", 0)
+                                            total_duration += duration
+
+                                            # Check if this valve run was skipped
+                                            if valve_run.get("skip"):
+                                                skip_info = valve_run.get("skip", {})
+                                            else:
+                                                all_skipped = False
+
+                                        run_info = {
+                                            "start": start_time,
+                                            "start_str": start_str,
+                                            "duration_seconds": program_run.get("totalRunDurationSeconds") or total_duration,
+                                            "skipped": all_skipped,
+                                            "skip_reason": skip_info.get("rainOverrideTrigger") if skip_info else None,
+                                            "predicted_precip_mm": skip_info.get("rainOverrideTrigger", {}).get("predictedPrecipMm") if skip_info else None,
+                                            "observed_precip_mm": skip_info.get("rainOverrideTrigger", {}).get("observedPrecipMm") if skip_info else None,
+                                            "skippable": program_run.get("skippable", False),
+                                            "is_future": is_future,
+                                        }
+
+                                        program_run_history[program_id].append(run_info)
+                                    except (ValueError, KeyError) as e:
+                                        _LOGGER.debug(f"Error parsing program run time: {e}")
+
+                                # Process valve runs from this program
                                 for valve_run in program_run.get("valveRunSummaries", []):
                                     valve_id = valve_run.get("valveId")
-                                    if valve_id and valve_id not in valve_ids:
-                                        valve_ids.append(valve_id)
+                                    if valve_id:
+                                        if valve_id not in valve_run_history:
+                                            valve_run_history[valve_id] = []
 
-                                programs_map[program_id] = {
-                                    "id": program_id,
-                                    "name": program_run.get("programName", "Unknown Program"),
-                                    "valveIds": valve_ids,
-                                    "active": False,  # Will be determined by running zones
-                                    "enabled": True,  # Assume enabled if in schedule
-                                    "programColor": program_run.get("programColor", "#00A7E1"),
-                                    "skippable": program_run.get("skippable", False),
-                                }
+                                        valve_start_str = valve_run.get("start")
+                                        if valve_start_str:
+                                            try:
+                                                valve_start_time = datetime.fromisoformat(valve_start_str.replace("Z", "+00:00"))
+                                                is_future = valve_start_time > current_time
+
+                                                valve_run_info = {
+                                                    "start": valve_start_time,
+                                                    "start_str": valve_start_str,
+                                                    "duration_seconds": valve_run.get("durationSeconds", 0),
+                                                    "flow_detected": valve_run.get("flowDetected"),
+                                                    "source": "program",
+                                                    "program_id": program_id,
+                                                    "program_name": program_run.get("programName", "Unknown"),
+                                                    "skipped": bool(valve_run.get("skip")),
+                                                    "is_future": is_future,
+                                                }
+                                                valve_run_history[valve_id].append(valve_run_info)
+                                            except (ValueError, KeyError) as e:
+                                                _LOGGER.debug(f"Error parsing valve run time from program: {e}")
+
+                        # Process quick runs (manual runs via app)
+                        for quick_run in day_view.get("valveQuickRunSummaries", []):
+                            for valve_run in quick_run.get("valveRunSummaries", []):
+                                valve_id = valve_run.get("valveId")
+                                if valve_id:
+                                    if valve_id not in valve_run_history:
+                                        valve_run_history[valve_id] = []
+
+                                    valve_start_str = valve_run.get("start")
+                                    if valve_start_str:
+                                        try:
+                                            valve_start_time = datetime.fromisoformat(valve_start_str.replace("Z", "+00:00"))
+                                            is_future = valve_start_time > current_time
+
+                                            valve_run_info = {
+                                                "start": valve_start_time,
+                                                "start_str": valve_start_str,
+                                                "duration_seconds": valve_run.get("durationSeconds", 0),
+                                                "flow_detected": valve_run.get("flowDetected"),
+                                                "source": "quick_run",
+                                                "is_future": is_future,
+                                            }
+                                            valve_run_history[valve_id].append(valve_run_info)
+                                        except (ValueError, KeyError) as e:
+                                            _LOGGER.debug(f"Error parsing valve run time from quick run: {e}")
+
+                # Process valve run history to extract previous and next runs
+                for valve_id, runs in valve_run_history.items():
+                    # Sort runs by start time
+                    sorted_runs = sorted(runs, key=lambda x: x["start"])
+
+                    # Find most recent past run and next future run
+                    previous_run = None
+                    next_run = None
+
+                    for run in reversed(sorted_runs):
+                        if not run["is_future"] and previous_run is None:
+                            previous_run = run
+                        if run["is_future"] and (next_run is None or run["start"] < next_run["start"]):
+                            next_run = run
+
+                    self.valve_run_summaries[valve_id] = {
+                        "previous_run": previous_run,
+                        "next_run": next_run,
+                    }
+
+                # Process program run history to extract previous and next runs
+                for program_id, runs in program_run_history.items():
+                    # Sort runs by start time
+                    sorted_runs = sorted(runs, key=lambda x: x["start"])
+
+                    # Find most recent past run and next future run
+                    previous_run = None
+                    next_run = None
+
+                    for run in reversed(sorted_runs):
+                        if not run["is_future"] and previous_run is None:
+                            previous_run = run
+                        if run["is_future"] and (next_run is None or run["start"] < next_run["start"]):
+                            next_run = run
+
+                    self.program_run_summaries[program_id] = {
+                        "previous_run": previous_run,
+                        "next_run": next_run,
+                    }
 
                 self.schedules = list(programs_map.values())
                 if self.schedules:
                     _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
+
+                    # Dynamically create sensors for new programs
+                    if hasattr(self, '_program_sensor_ids') and hasattr(self, '_sensor_add_entities_callback'):
+                        new_programs = []
+                        for program in self.schedules:
+                            program_id = program.get("id")
+                            if program_id and program_id not in self._program_sensor_ids:
+                                new_programs.append(program)
+                                self._program_sensor_ids.add(program_id)
+                                _LOGGER.info(f"Detected new program: {program.get('name', program_id)}")
+
+                        if new_programs:
+                            # Import here to avoid circular dependency
+                            from .sensor import RachioSmartHoseTimerProgramSensor
+                            new_sensors = [
+                                RachioSmartHoseTimerProgramSensor(self.coordinator, self, program)
+                                for program in new_programs
+                            ]
+                            self._sensor_add_entities_callback(new_sensors)
+                            _LOGGER.info(f"Added {len(new_sensors)} new program sensors")
                 else:
                     _LOGGER.debug(f"No programs configured for device {self.device_id}")
 

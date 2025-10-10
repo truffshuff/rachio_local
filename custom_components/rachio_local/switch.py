@@ -223,10 +223,42 @@ class RachioValveSwitch(RachioZoneSwitch):
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes."""
-        return {
+        """Return extra state attributes including run history."""
+        attributes = {
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
+
+        # Add run summary information if available
+        if hasattr(self.handler, 'valve_run_summaries') and self.zone_id in self.handler.valve_run_summaries:
+            summaries = self.handler.valve_run_summaries[self.zone_id]
+
+            # Add previous run information
+            if summaries.get("previous_run"):
+                prev = summaries["previous_run"]
+                attributes["previous_run_start"] = prev["start_str"]
+                attributes["previous_run_duration_seconds"] = prev["duration_seconds"]
+                attributes["previous_run_duration_minutes"] = prev["duration_seconds"] // 60
+                if prev.get("flow_detected") is not None:
+                    attributes["previous_run_flow_detected"] = prev["flow_detected"]
+                if prev.get("source"):
+                    attributes["previous_run_source"] = prev["source"]
+                if prev.get("program_name"):
+                    attributes["previous_run_program"] = prev["program_name"]
+                if prev.get("skipped"):
+                    attributes["previous_run_skipped"] = prev["skipped"]
+
+            # Add next run information
+            if summaries.get("next_run"):
+                next_run = summaries["next_run"]
+                attributes["next_run_start"] = next_run["start_str"]
+                attributes["next_run_duration_seconds"] = next_run["duration_seconds"]
+                attributes["next_run_duration_minutes"] = next_run["duration_seconds"] // 60
+                if next_run.get("source"):
+                    attributes["next_run_source"] = next_run["source"]
+                if next_run.get("program_name"):
+                    attributes["next_run_program"] = next_run["program_name"]
+
+        return attributes
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""

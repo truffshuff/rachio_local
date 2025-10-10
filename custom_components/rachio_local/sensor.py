@@ -34,6 +34,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     entities = []
     entry_data = hass.data[DOMAIN][config_entry.entry_id]["devices"]
 
+    # Store the async_add_entities callback for dynamic entity creation
+    if "sensor_add_entities" not in hass.data[DOMAIN][config_entry.entry_id]:
+        hass.data[DOMAIN][config_entry.entry_id]["sensor_add_entities"] = async_add_entities
+
     for device_id, data in entry_data.items():
         handler = data["handler"]
         coordinator = data["coordinator"]
@@ -69,7 +73,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entities.append(RachioAPICallSensor(coordinator, handler))
             entities.append(RachioPollingStatusSensor(coordinator, handler))
             _LOGGER.debug(f"Added base station sensors for {handler.name}")
-            
+
             for valve in handler.zones:
                 entities.extend([
                     RachioValveStatusSensor(coordinator, handler, valve),
@@ -82,9 +86,20 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 _LOGGER.debug(f"Added valve sensors for {valve.get('name', valve.get('id'))}")
 
             # Add program sensors for Smart Hose Timers
+            # Track which programs we've created sensors for
+            if not hasattr(handler, '_program_sensor_ids'):
+                handler._program_sensor_ids = set()
+
             for program in handler.schedules:
-                entities.append(RachioSmartHoseTimerProgramSensor(coordinator, handler, program))
-                _LOGGER.debug(f"Added program sensor for {program.get('name', program.get('id'))}")
+                program_id = program.get("id")
+                if program_id:
+                    handler._program_sensor_ids.add(program_id)
+                    entities.append(RachioSmartHoseTimerProgramSensor(coordinator, handler, program))
+                    _LOGGER.debug(f"Added program sensor for {program.get('name', program.get('id'))}")
+
+            # Set up listener for coordinator updates to detect new programs
+            handler._sensor_add_entities_callback = async_add_entities
+
     _LOGGER.info(f"Adding {len(entities)} Rachio sensor entities: {[e.name for e in entities]}")
     async_add_entities(entities)
 
@@ -782,7 +797,7 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return program details as attributes."""
+        """Return program details as attributes including run history."""
         # Find the current program data from handler.schedules
         current_program = None
         for schedule in self.handler.schedules:
@@ -851,5 +866,32 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["created_at"] = current_program["createdAt"]
         if "updatedAt" in current_program:
             attributes["updated_at"] = current_program["updatedAt"]
+
+        # Add run summary information if available
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+
+            # Add previous run information
+            if summaries.get("previous_run"):
+                prev = summaries["previous_run"]
+                attributes["previous_run_start"] = prev["start_str"]
+                attributes["previous_run_duration_seconds"] = prev["duration_seconds"]
+                attributes["previous_run_duration_minutes"] = prev["duration_seconds"] // 60
+                attributes["previous_run_skipped"] = prev.get("skipped", False)
+                attributes["previous_run_skippable"] = prev.get("skippable", False)
+
+                # Add precipitation information if available
+                if prev.get("predicted_precip_mm") is not None:
+                    attributes["previous_run_predicted_precip_mm"] = prev["predicted_precip_mm"]
+                if prev.get("observed_precip_mm") is not None:
+                    attributes["previous_run_observed_precip_mm"] = prev["observed_precip_mm"]
+
+            # Add next run information
+            if summaries.get("next_run"):
+                next_run = summaries["next_run"]
+                attributes["next_run_start"] = next_run["start_str"]
+                attributes["next_run_duration_seconds"] = next_run["duration_seconds"]
+                attributes["next_run_duration_minutes"] = next_run["duration_seconds"] // 60
+                attributes["next_run_skippable"] = next_run.get("skippable", False)
 
         return attributes
