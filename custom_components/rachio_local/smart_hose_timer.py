@@ -13,6 +13,7 @@ from .const import (
     VALVE_START,
     VALVE_STOP,
     PROGRAM_GET,
+    PROGRAM_GET_V2,
 )
 from .utils import get_update_interval
 
@@ -49,6 +50,11 @@ class RachioSmartHoseTimerHandler:
         # Run history summaries (populated from API)
         self.valve_run_summaries = {}  # valve_id -> {previous_run: {...}, next_run: {...}}
         self.program_run_summaries = {}  # program_id -> {previous_run: {...}, next_run: {...}}
+
+        # Program details cache with timestamps (for enabled/disabled status and other details)
+        self._program_details = {}  # program_id -> {details: {...}, last_fetched: timestamp}
+        self._program_details_refresh_interval = 3600  # Refresh hourly (in seconds)
+        self._first_update_complete = False  # Track if we've done the initial update
 
          # Base station specific attributes
         self.base_station_connected = False
@@ -90,6 +96,43 @@ class RachioSmartHoseTimerHandler:
             return None
         resp.raise_for_status()
         return await resp.json()
+
+    async def _fetch_program_details(self, session, program_id: str, force_refresh: bool = False) -> dict | None:
+        """Fetch detailed program information using getProgramV2 API with smart caching.
+
+        Args:
+            session: aiohttp ClientSession
+            program_id: The program ID to fetch
+            force_refresh: If True, bypass cache and fetch fresh data
+
+        Returns:
+            Program details dict or None if fetch failed
+        """
+        current_time = time.time()
+
+        # Check if we have cached data and it's still fresh (unless force_refresh is True)
+        if not force_refresh and program_id in self._program_details:
+            cached = self._program_details[program_id]
+            age = current_time - cached["last_fetched"]
+            if age < self._program_details_refresh_interval:
+                _LOGGER.debug(f"Using cached program details for {program_id} (age: {age:.0f}s)")
+                return cached["details"]
+
+        # Fetch fresh data
+        url = f"{CLOUD_BASE_URL}/{PROGRAM_GET_V2.format(id=program_id)}"
+        _LOGGER.debug(f"Fetching fresh program details for {program_id}")
+        data = await self._make_request(session, url)
+
+        if data:
+            # Cache the result with timestamp
+            self._program_details[program_id] = {
+                "details": data,
+                "last_fetched": current_time
+            }
+            _LOGGER.debug(f"Cached program details for {program_id}")
+            return data
+
+        return None
 
     async def async_update(self) -> None:
         try:
@@ -179,12 +222,18 @@ class RachioSmartHoseTimerHandler:
                                         if valve_id and valve_id not in valve_ids:
                                             valve_ids.append(valve_id)
 
+                                    # Check if we have cached program details with enabled status
+                                    enabled_status = True  # Default to enabled if in schedule
+                                    if program_id in self._program_details:
+                                        cached_program = self._program_details[program_id]["details"].get("program", {})
+                                        enabled_status = cached_program.get("enabled", True)
+
                                     programs_map[program_id] = {
                                         "id": program_id,
                                         "name": program_run.get("programName", "Unknown Program"),
                                         "valveIds": valve_ids,
                                         "active": False,  # Will be determined by running zones
-                                        "enabled": True,  # Assume enabled if in schedule
+                                        "enabled": enabled_status,  # Use cached value if available
                                         "programColor": program_run.get("programColor", "#00A7E1"),
                                         "skippable": program_run.get("skippable", False),
                                     }
@@ -326,9 +375,101 @@ class RachioSmartHoseTimerHandler:
                         "next_run": next_run,
                     }
 
+                # Also check for programs we've seen before but aren't in current summary
+                # (disabled programs won't appear in the summary but we still want to track them)
+                all_known_program_ids = set(programs_map.keys())
+                for cached_program_id in list(self._program_details.keys()):
+                    if cached_program_id not in all_known_program_ids:
+                        # This program was cached but isn't in the current summary
+                        # It might be disabled - add it back to our schedules
+                        cached_details = self._program_details[cached_program_id]["details"]
+                        if cached_details and "program" in cached_details:
+                            prog = cached_details["program"]
+                            if prog.get("id") not in programs_map:
+                                # Build valve IDs from assignments
+                                valve_ids = [a.get("entityId") for a in prog.get("assignments", []) if a.get("entityId")]
+
+                                programs_map[prog["id"]] = {
+                                    "id": prog["id"],
+                                    "name": prog.get("name", "Unknown Program"),
+                                    "valveIds": valve_ids,
+                                    "active": False,
+                                    "enabled": prog.get("enabled", False),
+                                    "programColor": prog.get("color", "#00A7E1"),
+                                    "skippable": False,
+                                }
+                                _LOGGER.debug(f"Re-added cached program {prog['id']} ({prog.get('name')}) - not in current summary (possibly disabled)")
+
                 self.schedules = list(programs_map.values())
                 if self.schedules:
                     _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
+
+                    # Fetch detailed program information for new programs and hourly refresh
+                    programs_needing_details = []
+                    current_time = time.time()
+
+                    for program in self.schedules:
+                        program_id = program.get("id")
+                        if program_id:
+                            # Fetch details if:
+                            # 1. This is the first update (startup)
+                            # 2. Program is new (not in cache)
+                            # 3. Cache is stale (older than refresh interval)
+                            should_fetch = False
+
+                            if not self._first_update_complete:
+                                # Force refresh all programs on first update
+                                should_fetch = True
+                                _LOGGER.debug(f"Program {program_id} fetching on startup")
+                            elif program_id not in self._program_details:
+                                should_fetch = True
+                                _LOGGER.debug(f"Program {program_id} is new, will fetch details")
+                            else:
+                                cache_age = current_time - self._program_details[program_id]["last_fetched"]
+                                if cache_age >= self._program_details_refresh_interval:
+                                    should_fetch = True
+                                    _LOGGER.debug(f"Program {program_id} cache is stale ({cache_age:.0f}s), will refresh")
+
+                            if should_fetch:
+                                programs_needing_details.append(program_id)
+
+                    # Fetch program details for programs that need it
+                    if programs_needing_details:
+                        _LOGGER.info(f"Fetching details for {len(programs_needing_details)} program(s)")
+                        for program_id in programs_needing_details:
+                            details = await self._fetch_program_details(session, program_id, force_refresh=True)
+                            if details:
+                                # Extract the program object from the response
+                                program_details = details.get("program", {})
+
+                                # Merge details into program data
+                                for program in self.schedules:
+                                    if program.get("id") == program_id:
+                                        # Update enabled status and other details from API
+                                        program["enabled"] = program_details.get("enabled", True)
+                                        program["color"] = program_details.get("color", "#00A7E1")
+                                        program["startOn"] = program_details.get("startOn", {})
+                                        program["dailyInterval"] = program_details.get("dailyInterval", {})
+                                        program["plannedRuns"] = program_details.get("plannedRuns", [])
+                                        program["assignments"] = program_details.get("assignments", [])
+                                        program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
+                                        program["settings"] = program_details.get("settings", {})
+
+                                        # Legacy fields for backward compatibility
+                                        program["schedule"] = program_details.get("schedule", {})
+                                        program["durationSeconds"] = program_details.get("durationSeconds")
+                                        program["createdAt"] = program_details.get("createdAt")
+                                        program["updatedAt"] = program_details.get("updatedAt")
+
+                                        _LOGGER.info(f"Updated program '{program.get('name')}' ({program_id[:8]}...) - enabled={program['enabled']}, rainSkip={program['rainSkipEnabled']}, startOn={program.get('startOn')}, interval={program.get('dailyInterval')}")
+                                        break
+                            else:
+                                _LOGGER.warning(f"Failed to fetch details for program {program_id}")
+
+                    # Mark first update as complete after fetching all program details
+                    if not self._first_update_complete:
+                        self._first_update_complete = True
+                        _LOGGER.debug("First update complete - subsequent updates will use cached program details")
 
                     # Dynamically create sensors for new programs
                     if hasattr(self, '_program_sensor_ids') and hasattr(self, '_sensor_add_entities_callback'):

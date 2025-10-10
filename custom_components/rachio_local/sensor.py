@@ -783,8 +783,8 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         if not current_program:
             return "unavailable"
 
-        # Check if program is enabled
-        enabled = current_program.get("enabled", False)
+        # Check if program is enabled (from getProgramV2 API)
+        enabled = current_program.get("enabled", True)
         if not enabled:
             return "disabled"
 
@@ -866,6 +866,73 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["created_at"] = current_program["createdAt"]
         if "updatedAt" in current_program:
             attributes["updated_at"] = current_program["updatedAt"]
+
+        # Add program schedule details from getProgramV2
+        if "startOn" in current_program:
+            start_on = current_program["startOn"]
+            attributes["start_on"] = f"{start_on.get('year', '')}-{start_on.get('month', ''):02d}-{start_on.get('day', ''):02d}"
+
+        if "dailyInterval" in current_program:
+            interval = current_program["dailyInterval"]
+            if "intervalDays" in interval:
+                attributes["interval_days"] = interval["intervalDays"]
+
+        if "plannedRuns" in current_program and current_program["plannedRuns"]:
+            planned_run = current_program["plannedRuns"][0]  # Get first planned run
+
+            # Check for sun event start time
+            if "sunStart" in planned_run:
+                sun_start = planned_run["sunStart"]
+                sun_event = sun_start.get("sunEvent", "")
+                offset_seconds = int(sun_start.get("offsetSeconds", 0))
+
+                if sun_event == "BEFORE_RISE":
+                    attributes["start_time_type"] = "Before Sunrise"
+                elif sun_event == "AFTER_RISE":
+                    attributes["start_time_type"] = "After Sunrise"
+                elif sun_event == "BEFORE_SET":
+                    attributes["start_time_type"] = "Before Sunset"
+                elif sun_event == "AFTER_SET":
+                    attributes["start_time_type"] = "After Sunset"
+                else:
+                    attributes["start_time_type"] = sun_event
+
+                if offset_seconds != 0:
+                    offset_minutes = offset_seconds // 60
+                    attributes["start_time_offset_minutes"] = offset_minutes
+
+            # Check for fixed start time
+            elif "fixedStart" in planned_run:
+                fixed_start = planned_run["fixedStart"]
+                if "startAt" in fixed_start:
+                    start_at = fixed_start["startAt"]
+                    hour = start_at.get("hour", 0)
+                    minute = start_at.get("minute", 0)
+                    attributes["start_time_type"] = "Fixed Time"
+                    attributes["start_time"] = f"{hour:02d}:{minute:02d}"
+
+            # Entity runs information
+            if "entityRuns" in planned_run:
+                entity_runs = planned_run["entityRuns"]
+                total_duration = sum(int(run.get("durationSec", 0)) for run in entity_runs)
+                attributes["total_duration_seconds"] = total_duration
+                attributes["total_duration_minutes"] = total_duration // 60
+
+            # Run concurrently and cycle & soak
+            if "runConcurrently" in planned_run:
+                attributes["run_concurrently"] = planned_run["runConcurrently"]
+            if "cycleAndSoak" in planned_run:
+                attributes["cycle_and_soak"] = planned_run["cycleAndSoak"]
+
+        # Rain skip enabled
+        if "rainSkipEnabled" in current_program:
+            attributes["rain_skip_enabled"] = current_program["rainSkipEnabled"]
+
+        # Notification settings
+        if "settings" in current_program:
+            settings = current_program["settings"]
+            attributes["start_notifications"] = settings.get("startOnNotificationsEnabled", False)
+            attributes["end_notifications"] = settings.get("endOnNotificationsEnabled", False)
 
         # Add run summary information if available
         if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
