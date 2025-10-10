@@ -332,6 +332,7 @@ class RachioValveConnectionSensor(RachioBaseEntity, SensorEntity):
                 desired_state = valve.get("state", {}).get("desiredState", {})
 
                 return {
+                    "valve_id": valve.get("id"),
                     "connection_id": valve.get("connectionId"),
                     "color": valve.get("color"),
                     "detect_flow": valve.get("detectFlow"),
@@ -806,7 +807,11 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 break
 
         if not current_program:
+            _LOGGER.debug(f"Program {self.program_id}: No program data found in handler.schedules")
             return {}
+
+        # Log the keys available in the program data for debugging
+        _LOGGER.debug(f"Program {self.program_id} ({current_program.get('name')}): Available keys: {list(current_program.keys())}")
 
         attributes = {
             "program_id": self.program_id,
@@ -815,8 +820,16 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             "active": current_program.get("active", False),
         }
 
-        # Add valve information
+        # Add color if available
+        if "color" in current_program:
+            attributes["color"] = current_program["color"]
+
+        # Add valve information from both valveIds and assignments
         valve_ids = current_program.get("valveIds", [])
+        if not valve_ids and "assignments" in current_program:
+            # Fall back to assignments if valveIds not present
+            valve_ids = [assignment.get("entityId") for assignment in current_program["assignments"] if "entityId" in assignment]
+
         if valve_ids:
             valve_names = []
             for valve_id in valve_ids:
@@ -825,12 +838,15 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                         valve_names.append(valve.get("name", "Unknown"))
                         break
             attributes["valve_names"] = ", ".join(valve_names) if valve_names else "Unknown"
-            attributes["valve_ids"] = valve_ids
+            attributes["valve_ids"] = ", ".join(valve_ids) if isinstance(valve_ids, list) else valve_ids
 
-        # Add schedule information
-        if "schedule" in current_program:
+        # Add schedule information (only if schedule data exists and has content)
+        if "schedule" in current_program and current_program["schedule"]:
             schedule = current_program["schedule"]
-            attributes["schedule_type"] = schedule.get("type", "Unknown")
+
+            # Only add schedule_type if it has a value
+            if schedule.get("type"):
+                attributes["schedule_type"] = schedule["type"]
 
             # Add start times
             if "startTimes" in schedule:
@@ -861,10 +877,10 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["duration_minutes"] = minutes
             attributes["duration_seconds"] = duration_seconds
 
-        # Add creation/update timestamps
-        if "createdAt" in current_program:
+        # Add creation/update timestamps (only if they have values)
+        if current_program.get("createdAt"):
             attributes["created_at"] = current_program["createdAt"]
-        if "updatedAt" in current_program:
+        if current_program.get("updatedAt"):
             attributes["updated_at"] = current_program["updatedAt"]
 
         # Add program schedule details from getProgramV2
@@ -876,8 +892,10 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             interval = current_program["dailyInterval"]
             if "intervalDays" in interval:
                 attributes["interval_days"] = interval["intervalDays"]
+            _LOGGER.debug(f"Program {self.program_id}: dailyInterval={interval}")
 
         if "plannedRuns" in current_program and current_program["plannedRuns"]:
+            _LOGGER.debug(f"Program {self.program_id}: plannedRuns present with {len(current_program['plannedRuns'])} run(s)")
             planned_run = current_program["plannedRuns"][0]  # Get first planned run
 
             # Check for sun event start time
@@ -917,12 +935,17 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 total_duration = sum(int(run.get("durationSec", 0)) for run in entity_runs)
                 attributes["total_duration_seconds"] = total_duration
                 attributes["total_duration_minutes"] = total_duration // 60
+                _LOGGER.debug(f"Program {self.program_id}: entityRuns count={len(entity_runs)}, total_duration={total_duration}s")
 
             # Run concurrently and cycle & soak
             if "runConcurrently" in planned_run:
                 attributes["run_concurrently"] = planned_run["runConcurrently"]
+                _LOGGER.debug(f"Program {self.program_id}: runConcurrently={planned_run['runConcurrently']}")
             if "cycleAndSoak" in planned_run:
                 attributes["cycle_and_soak"] = planned_run["cycleAndSoak"]
+                _LOGGER.debug(f"Program {self.program_id}: cycleAndSoak={planned_run['cycleAndSoak']}")
+        else:
+            _LOGGER.debug(f"Program {self.program_id}: No plannedRuns in current_program")
 
         # Rain skip enabled
         if "rainSkipEnabled" in current_program:
@@ -933,6 +956,11 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             settings = current_program["settings"]
             attributes["start_notifications"] = settings.get("startOnNotificationsEnabled", False)
             attributes["end_notifications"] = settings.get("endOnNotificationsEnabled", False)
+
+            # Add startOnDate if available
+            if "startOnDate" in settings:
+                start_on_date = settings["startOnDate"]
+                attributes["settings_start_on_date"] = f"{start_on_date.get('year', '')}-{start_on_date.get('month', ''):02d}-{start_on_date.get('day', ''):02d}"
 
         # Add run summary information if available
         if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:

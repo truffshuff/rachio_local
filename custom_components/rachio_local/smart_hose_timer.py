@@ -429,6 +429,37 @@ class RachioSmartHoseTimerHandler:
                                 if cache_age >= self._program_details_refresh_interval:
                                     should_fetch = True
                                     _LOGGER.debug(f"Program {program_id} cache is stale ({cache_age:.0f}s), will refresh")
+                                else:
+                                    # Apply cached details to program if cache is still valid
+                                    cached_details = self._program_details[program_id]["details"]
+                                    if cached_details and "program" in cached_details:
+                                        program_details = cached_details["program"]
+                                        # Merge cached details into program data
+                                        program["enabled"] = program_details.get("enabled", True)
+                                        program["color"] = program_details.get("color", "#00A7E1")
+                                        program["startOn"] = program_details.get("startOn", {})
+                                        program["dailyInterval"] = program_details.get("dailyInterval", {})
+                                        program["plannedRuns"] = program_details.get("plannedRuns", [])
+                                        program["assignments"] = program_details.get("assignments", [])
+                                        program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
+                                        program["settings"] = program_details.get("settings", {})
+
+                                        # Update valveIds from assignments to get complete list
+                                        # (summary API may only show valves from a specific run)
+                                        if program_details.get("assignments"):
+                                            valve_ids = [a.get("entityId") for a in program_details["assignments"] if a.get("entityId")]
+                                            if valve_ids:
+                                                program["valveIds"] = valve_ids
+
+                                        # Legacy fields for backward compatibility (may not exist for Smart Hose Timers)
+                                        if program_details.get("schedule"):
+                                            program["schedule"] = program_details["schedule"]
+                                        if program_details.get("durationSeconds"):
+                                            program["durationSeconds"] = program_details["durationSeconds"]
+                                        if program_details.get("createdAt"):
+                                            program["createdAt"] = program_details["createdAt"]
+                                        if program_details.get("updatedAt"):
+                                            program["updatedAt"] = program_details["updatedAt"]
 
                             if should_fetch:
                                 programs_needing_details.append(program_id)
@@ -437,10 +468,13 @@ class RachioSmartHoseTimerHandler:
                     if programs_needing_details:
                         _LOGGER.info(f"Fetching details for {len(programs_needing_details)} program(s)")
                         for program_id in programs_needing_details:
+                            _LOGGER.debug(f"Calling _fetch_program_details for program {program_id}")
                             details = await self._fetch_program_details(session, program_id, force_refresh=True)
                             if details:
+                                _LOGGER.debug(f"Received details for program {program_id}: keys={list(details.keys())}")
                                 # Extract the program object from the response
                                 program_details = details.get("program", {})
+                                _LOGGER.debug(f"Program details keys for {program_id}: {list(program_details.keys())}")
 
                                 # Merge details into program data
                                 for program in self.schedules:
@@ -455,16 +489,26 @@ class RachioSmartHoseTimerHandler:
                                         program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
                                         program["settings"] = program_details.get("settings", {})
 
+                                        # Update valveIds from assignments to get complete list
+                                        # (summary API may only show valves from a specific run)
+                                        if program_details.get("assignments"):
+                                            valve_ids = [a.get("entityId") for a in program_details["assignments"] if a.get("entityId")]
+                                            if valve_ids:
+                                                old_valve_ids = program.get("valveIds", [])
+                                                program["valveIds"] = valve_ids
+                                                _LOGGER.debug(f"Program {program_id} valveIds updated from {len(old_valve_ids)} to {len(valve_ids)} valves")
+
                                         # Legacy fields for backward compatibility
                                         program["schedule"] = program_details.get("schedule", {})
                                         program["durationSeconds"] = program_details.get("durationSeconds")
                                         program["createdAt"] = program_details.get("createdAt")
                                         program["updatedAt"] = program_details.get("updatedAt")
 
-                                        _LOGGER.info(f"Updated program '{program.get('name')}' ({program_id[:8]}...) - enabled={program['enabled']}, rainSkip={program['rainSkipEnabled']}, startOn={program.get('startOn')}, interval={program.get('dailyInterval')}")
+                                        _LOGGER.info(f"Updated program '{program.get('name')}' ({program_id[:8]}...) - enabled={program['enabled']}, rainSkip={program['rainSkipEnabled']}, startOn={program.get('startOn')}, interval={program.get('dailyInterval')}, plannedRuns={len(program.get('plannedRuns', []))} run(s), valves={len(program.get('valveIds', []))}")
+                                        _LOGGER.debug(f"Program {program_id} now has keys: {list(program.keys())}")
                                         break
                             else:
-                                _LOGGER.warning(f"Failed to fetch details for program {program_id}")
+                                _LOGGER.warning(f"Failed to fetch details for program {program_id} - details returned None or empty")
 
                     # Mark first update as complete after fetching all program details
                     if not self._first_update_complete:

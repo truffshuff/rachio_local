@@ -155,6 +155,7 @@ class RachioZoneSwitch(RachioSwitch):
     def extra_state_attributes(self):
         """Return extra state attributes."""
         return {
+            "zone_id": self.zone_id,
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
 
@@ -225,6 +226,7 @@ class RachioValveSwitch(RachioZoneSwitch):
     def extra_state_attributes(self):
         """Return extra state attributes including run history."""
         attributes = {
+            "valve_id": self.zone_id,
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
 
