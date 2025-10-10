@@ -472,13 +472,13 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
     """Sensor showing API call count and rate limit info."""
     def __init__(self, coordinator, handler):
         super().__init__(coordinator, handler)
-        self._attr_name = f"{handler.name} API Calls"
-        self._attr_unique_id = f"{handler.device_id}_api_calls"
+        self._attr_name = f"{handler.name} API Calls Remaining"
+        self._attr_unique_id = f"{handler.device_id}_api_calls_remaining"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
-        # Show API calls used in current window: rate_limit - rate_remaining
+        # Show API calls remaining in current window
         try:
             _LOGGER.debug(f"[APICallSensor] raw values: limit={self.handler.api_rate_limit}, remaining={self.handler.api_rate_remaining}, reset={self.handler.api_rate_reset}")
 
@@ -486,12 +486,10 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
                 _LOGGER.debug(f"[APICallSensor] Missing rate limit headers")
                 return None
 
-            limit = int(self.handler.api_rate_limit)
             remaining = int(self.handler.api_rate_remaining)
-            used = limit - remaining
 
-            _LOGGER.debug(f"[APICallSensor] calculated: limit={limit}, remaining={remaining}, used={used}")
-            return used
+            _LOGGER.debug(f"[APICallSensor] calculated: remaining={remaining}")
+            return remaining
         except (ValueError, TypeError) as e:
             _LOGGER.error(f"[APICallSensor] Error calculating value: {e}")
             return None
@@ -513,7 +511,19 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
                 reset_local = reset_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             except Exception:
                 reset_local = reset_utc
+
+        # Calculate calls used so far
+        calls_used = None
+        try:
+            if self.handler.api_rate_limit is not None and self.handler.api_rate_remaining is not None:
+                limit = int(self.handler.api_rate_limit)
+                remaining = int(self.handler.api_rate_remaining)
+                calls_used = limit - remaining
+        except (ValueError, TypeError):
+            pass
+
         return {
+            "calls_used": calls_used,
             "rate_limit": self.handler.api_rate_limit,
             "rate_remaining": self.handler.api_rate_remaining,
             "rate_reset": reset_local,
