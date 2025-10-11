@@ -38,6 +38,7 @@ class RachioSmartHoseTimerHandler:
         self._pending_start = {}
         self._last_watering_completed = {}  # Track completed watering times
         self._force_stopped = {}  # Track valves we've force stopped (zone_id -> timestamp)
+        self._expected_end_times = {}  # Track expected end times for running valves (zone_id -> end_time)
         self.api_call_count = 0
         self.api_rate_limit = None
         self.api_rate_remaining = None
@@ -541,13 +542,24 @@ class RachioSmartHoseTimerHandler:
                 running_zones = {}
                 current_time = datetime.now()
 
+                # Track which valves were running last cycle (to detect completions)
+                previously_running = set(self.running_zones.keys())
+
+                _LOGGER.debug(f"Checking {len(self.zones)} valves for running/completed status")
+
                 for valve in self.zones:
                     valve_id = valve["id"]
                     state = valve.get("state", {}).get("reportedState", {})
                     last_action = state.get("lastWateringAction", {})
 
+                    # Log valve status for debugging
+                    _LOGGER.debug(f"Valve {valve_id}: has lastWateringAction={last_action is not None and len(last_action) > 0}, has start={last_action.get('start') is not None}, has duration={last_action.get('durationSeconds') is not None}")
+
                     # Check if there's a watering action with start time and duration
                     if last_action.get("start") and last_action.get("durationSeconds"):
+                        # Log all available fields in lastWateringAction for debugging
+                        if last_action:
+                            _LOGGER.debug(f"Valve {valve_id} lastWateringAction keys: {list(last_action.keys())}")
                         try:
                             # Parse the start time (ISO 8601 format)
                             start_str = last_action["start"]
@@ -583,11 +595,13 @@ class RachioSmartHoseTimerHandler:
 
                             # Check if we manually stopped this valve recently
                             # If so, ignore stale API data showing it's still running
+                            # But still allow completion time updates for newer runs
                             if valve_id in self._last_watering_completed:
                                 last_completed = self._last_watering_completed[valve_id]
-                                # If the API action ended before our manual stop, ignore it
-                                if end_time <= last_completed:
-                                    _LOGGER.debug(f"Valve {valve_id} ignoring stale API data (ended {end_time} vs stopped {last_completed})")
+                                # If the API action ended before our manual stop AND it's not currently running,
+                                # this is stale data - ignore it
+                                if end_time <= last_completed and start_time <= current_time <= end_time_buffer:
+                                    _LOGGER.debug(f"Valve {valve_id} ignoring stale API data showing as running (ended {end_time} vs last completed {last_completed})")
                                     continue
 
                             # Check if currently watering
@@ -598,13 +612,21 @@ class RachioSmartHoseTimerHandler:
                                     "remaining": max(0, remaining_seconds),
                                     "start_time": start_time,  # Store start time for program matching
                                     "duration": duration_seconds,
+                                    # Store program ID if available in lastWateringAction
+                                    "program_id": last_action.get("programId") or last_action.get("program_id"),
                                 }
-                                _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining")
+                                # Track expected end time for completion detection
+                                self._expected_end_times[valve_id] = end_time
+                                _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining, program_id={running_zones[valve_id].get('program_id')}, expected_end={end_time}")
                             elif current_time > end_time_buffer:
-                                # Watering has completed, record completion time
-                                if valve_id not in self._last_watering_completed:
+                                # Watering has completed, record/update completion time
+                                # Always update to ensure we capture the most recent completion
+                                old_completed = self._last_watering_completed.get(valve_id)
+                                if valve_id not in self._last_watering_completed or self._last_watering_completed[valve_id] < end_time:
                                     self._last_watering_completed[valve_id] = end_time
-                                    _LOGGER.debug(f"Valve {valve_id} watering completed at {end_time}")
+                                    _LOGGER.info(f"Valve {valve_id} watering completed at {end_time} (was: {old_completed})")
+                                else:
+                                    _LOGGER.debug(f"Valve {valve_id} watering already completed at {old_completed}, API end_time {end_time} is not newer")
                         except (ValueError, KeyError) as e:
                             _LOGGER.warning(f"Error parsing watering times for valve {valve_id}: {e}")
 
@@ -622,6 +644,24 @@ class RachioSmartHoseTimerHandler:
                                 _LOGGER.debug(f"Valve {zone_id} keeping optimistic running state (still in pending window)")
 
                 self.running_zones = running_zones
+
+                # Detect completions: valves that were running but are no longer
+                # (The API removes lastWateringAction after completion, so we track expected end times)
+                for valve_id in previously_running:
+                    if valve_id not in running_zones and valve_id in self._expected_end_times:
+                        # Valve was running but is no longer - it has completed
+                        expected_end = self._expected_end_times[valve_id]
+                        # Only record if this is a new or more recent completion
+                        if valve_id not in self._last_watering_completed or self._last_watering_completed[valve_id] < expected_end:
+                            self._last_watering_completed[valve_id] = expected_end
+                            _LOGGER.info(f"Valve {valve_id} detected as completed at {expected_end} (no longer running, API removed lastWateringAction)")
+                        # Clean up the expected end time
+                        del self._expected_end_times[valve_id]
+
+                # Clean up expected end times for valves that are no longer running and already recorded as completed
+                for valve_id in list(self._expected_end_times.keys()):
+                    if valve_id not in running_zones:
+                        del self._expected_end_times[valve_id]
 
                 # Detect running schedules by matching running valves to programs based on timing
                 running_schedules = {}
@@ -642,10 +682,17 @@ class RachioSmartHoseTimerHandler:
                         _LOGGER.debug(f"Valve {valve_id} has no start_time, skipping program matching")
                         continue
 
+                    # First check if lastWateringAction directly provides program_id
+                    direct_program_id = zone_data.get("program_id")
+                    if direct_program_id:
+                        valve_to_program_map[valve_id] = direct_program_id
+                        _LOGGER.info(f"Valve {valve_id} matched to program {direct_program_id} via lastWateringAction.programId")
+                        continue
+
                     # Check if this valve has a recent run in valve_run_summaries that matches timing
                     if valve_id in self.valve_run_summaries:
                         summaries = self.valve_run_summaries[valve_id]
-                        _LOGGER.debug(f"Valve {valve_id} checking run summaries - previous_run: {summaries.get('previous_run') is not None}, next_run: {summaries.get('next_run') is not None}")
+                        _LOGGER.debug(f"Valve {valve_id} (started at {valve_start_time}) checking run summaries - previous_run: {summaries.get('previous_run') is not None}, next_run: {summaries.get('next_run') is not None}")
 
                         # Check previous run (most recent past run - could be currently running)
                         prev_run = summaries.get("previous_run")
@@ -655,10 +702,10 @@ class RachioSmartHoseTimerHandler:
                                 run_start = prev_run.get("start")
                                 if run_start:
                                     time_diff = abs((run_start - valve_start_time).total_seconds())
-                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 1800s)")
-                                    # If the run start time is within 30 minutes of the valve start time, it's a match
-                                    # (API data can be stale, especially for manual program runs)
-                                    if time_diff < 1800:
+                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 3600s)")
+                                    # If the run start time is within 1 hour of the valve start time, it's a match
+                                    # Increased threshold to handle API lag for manual program runs
+                                    if time_diff < 3600:
                                         program_id = prev_run.get("program_id")
                                         if program_id:
                                             valve_to_program_map[valve_id] = program_id
