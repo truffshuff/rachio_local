@@ -595,7 +595,9 @@ class RachioSmartHoseTimerHandler:
                                 remaining_seconds = (end_time - current_time).total_seconds()
                                 running_zones[valve_id] = {
                                     "id": valve_id,
-                                    "remaining": max(0, remaining_seconds)
+                                    "remaining": max(0, remaining_seconds),
+                                    "start_time": start_time,  # Store start time for program matching
+                                    "duration": duration_seconds,
                                 }
                                 _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining")
                             elif current_time > end_time_buffer:
@@ -621,8 +623,156 @@ class RachioSmartHoseTimerHandler:
 
                 self.running_zones = running_zones
 
-                # Set running schedules (if any)
-                self.running_schedules = {prog["id"]: prog for prog in self.schedules if prog.get("active", False)}
+                # Detect running schedules by matching running valves to programs based on timing
+                running_schedules = {}
+
+                # Debug: Log all running valves
+                if running_zones:
+                    _LOGGER.debug(f"Currently running valves: {list(running_zones.keys())}")
+                    for valve_id, zone_data in running_zones.items():
+                        _LOGGER.debug(f"  Valve {valve_id}: start_time={zone_data.get('start_time')}, remaining={zone_data.get('remaining'):.0f}s")
+
+                # First, try to match running valves to programs using valve_run_summaries
+                # This contains the actual program association from the API
+                valve_to_program_map = {}  # valve_id -> program_id for currently running valves
+
+                for valve_id, zone_data in running_zones.items():
+                    valve_start_time = zone_data.get("start_time")
+                    if not valve_start_time:
+                        _LOGGER.debug(f"Valve {valve_id} has no start_time, skipping program matching")
+                        continue
+
+                    # Check if this valve has a recent run in valve_run_summaries that matches timing
+                    if valve_id in self.valve_run_summaries:
+                        summaries = self.valve_run_summaries[valve_id]
+                        _LOGGER.debug(f"Valve {valve_id} checking run summaries - previous_run: {summaries.get('previous_run') is not None}, next_run: {summaries.get('next_run') is not None}")
+
+                        # Check previous run (most recent past run - could be currently running)
+                        prev_run = summaries.get("previous_run")
+                        if prev_run:
+                            _LOGGER.debug(f"  previous_run: source={prev_run.get('source')}, start={prev_run.get('start')}, program_id={prev_run.get('program_id')}")
+                            if prev_run.get("source") == "program":
+                                run_start = prev_run.get("start")
+                                if run_start:
+                                    time_diff = abs((run_start - valve_start_time).total_seconds())
+                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 1800s)")
+                                    # If the run start time is within 30 minutes of the valve start time, it's a match
+                                    # (API data can be stale, especially for manual program runs)
+                                    if time_diff < 1800:
+                                        program_id = prev_run.get("program_id")
+                                        if program_id:
+                                            valve_to_program_map[valve_id] = program_id
+                                            _LOGGER.info(f"Valve {valve_id} matched to program {program_id} via previous_run timing (diff: {time_diff:.0f}s)")
+                                            continue
+
+                        # Check next run (scheduled future run - might have just started)
+                        next_run = summaries.get("next_run")
+                        if next_run:
+                            _LOGGER.debug(f"  next_run: source={next_run.get('source')}, start={next_run.get('start')}, program_id={next_run.get('program_id')}")
+                            if next_run.get("source") == "program":
+                                run_start = next_run.get("start")
+                                if run_start:
+                                    time_diff = abs((run_start - valve_start_time).total_seconds())
+                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 1800s)")
+                                    # If the scheduled start time is within 30 minutes of the valve start time, it's a match
+                                    if time_diff < 1800:
+                                        program_id = next_run.get("program_id")
+                                        if program_id:
+                                            valve_to_program_map[valve_id] = program_id
+                                            _LOGGER.info(f"Valve {valve_id} matched to program {program_id} via next_run timing (diff: {time_diff:.0f}s)")
+                                            continue
+
+                        _LOGGER.debug(f"Valve {valve_id} could not be matched to any program (no timing match)")
+                    else:
+                        _LOGGER.debug(f"Valve {valve_id} has no run summaries")
+
+                    # Fallback: Match based on program's next scheduled run time (from plannedRuns)
+                    if valve_id not in valve_to_program_map:
+                        # Find program with scheduled run closest to valve start time
+                        best_match = None
+                        best_time_diff = float('inf')
+
+                        for program in self.schedules:
+                            if valve_id not in program.get("valveIds", []):
+                                continue  # This program doesn't use this valve
+
+                            # Check plannedRuns for this program
+                            planned_runs = program.get("plannedRuns", [])
+                            for planned_run in planned_runs:
+                                # plannedRuns contains start time info
+                                start_info = planned_run.get("start", {})
+                                if start_info:
+                                    try:
+                                        # Parse the planned start time
+                                        year = start_info.get("year")
+                                        month = start_info.get("month")
+                                        day = start_info.get("day")
+                                        hour = start_info.get("hour", 0)
+                                        minute = start_info.get("minute", 0)
+
+                                        if year and month and day:
+                                            planned_start = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+                                            time_diff = abs((planned_start - valve_start_time).total_seconds())
+
+                                            _LOGGER.debug(f"  Program {program.get('id')} ({program.get('name')}): planned_start={planned_start}, diff={time_diff:.0f}s")
+
+                                            if time_diff < best_time_diff:
+                                                best_time_diff = time_diff
+                                                best_match = program.get("id")
+                                    except Exception as e:
+                                        _LOGGER.debug(f"Error parsing planned run time for program {program.get('id')}: {e}")
+
+                        if best_match and best_time_diff < 3600:  # Within 1 hour
+                            valve_to_program_map[valve_id] = best_match
+                            _LOGGER.info(f"Valve {valve_id} matched to program {best_match} via plannedRuns timing (diff: {best_time_diff:.0f}s)")
+                        elif best_match:
+                            _LOGGER.debug(f"Best program match for valve {valve_id} is {best_match} but time diff ({best_time_diff:.0f}s) exceeds 1 hour - likely a manual run")
+
+                # Debug: Log valve-to-program mapping
+                if valve_to_program_map:
+                    _LOGGER.debug(f"Valve-to-program mapping: {valve_to_program_map}")
+                else:
+                    _LOGGER.debug("No valves mapped to programs")
+
+                # Now determine which programs are running based on valve-to-program mapping
+                for program in self.schedules:
+                    program_id = program.get("id")
+                    valve_ids = program.get("valveIds", [])
+
+                    # Check if any of this program's valves are:
+                    # 1. Currently running AND
+                    # 2. Mapped to this specific program (via timing analysis)
+                    running_valves = []
+                    for valve_id in valve_ids:
+                        if valve_id in running_zones:
+                            # Valve is running - check if it's mapped to this program
+                            if valve_to_program_map.get(valve_id) == program_id:
+                                running_valves.append(valve_id)
+                                _LOGGER.debug(f"Program {program_id} ({program.get('name')}): valve {valve_id} matched")
+                            elif valve_id not in valve_to_program_map:
+                                # No mapping found - could be a quick run or manual run
+                                # Don't attribute it to any program
+                                _LOGGER.debug(f"Program {program_id} ({program.get('name')}): valve {valve_id} running but not mapped to any program")
+
+                    is_running = len(running_valves) > 0
+
+                    # Update the program's active state
+                    program["active"] = is_running
+
+                    if is_running:
+                        # Calculate remaining time for this program (max of all its running valves)
+                        max_remaining = 0
+                        for valve_id in running_valves:
+                            remaining = running_zones[valve_id].get("remaining", 0)
+                            max_remaining = max(max_remaining, remaining)
+
+                        program["remaining"] = max_remaining
+                        running_schedules[program_id] = program
+                        _LOGGER.info(f"Program {program.get('name')} ({program_id[:8]}...) is RUNNING - {len(running_valves)} valve(s) active, {max_remaining:.0f}s remaining")
+                    else:
+                        _LOGGER.debug(f"Program {program_id} ({program.get('name')}): not running (0 matched valves)")
+
+                self.running_schedules = running_schedules
         except Exception as err:
             _LOGGER.error("Error updating smart hose timer: %s", err)
             raise
