@@ -255,6 +255,7 @@ class RachioSmartHoseTimerHandler:
                                         total_duration = 0
                                         all_skipped = True
                                         skip_info = None
+                                        manual_skip = False
 
                                         for valve_run in program_run.get("valveRunSummaries", []):
                                             duration = valve_run.get("durationSeconds", 0)
@@ -263,6 +264,9 @@ class RachioSmartHoseTimerHandler:
                                             # Check if this valve run was skipped
                                             if valve_run.get("skip"):
                                                 skip_info = valve_run.get("skip", {})
+                                                # Check for manual override trigger
+                                                if "manualOverrideTrigger" in skip_info:
+                                                    manual_skip = True
                                             else:
                                                 all_skipped = False
 
@@ -271,6 +275,7 @@ class RachioSmartHoseTimerHandler:
                                             "start_str": start_str,
                                             "duration_seconds": program_run.get("totalRunDurationSeconds") or total_duration,
                                             "skipped": all_skipped,
+                                            "manual_skip": manual_skip,
                                             "skip_reason": skip_info.get("rainOverrideTrigger") if skip_info else None,
                                             "predicted_precip_mm": skip_info.get("rainOverrideTrigger", {}).get("predictedPrecipMm") if skip_info else None,
                                             "observed_precip_mm": skip_info.get("rainOverrideTrigger", {}).get("observedPrecipMm") if skip_info else None,
@@ -445,6 +450,14 @@ class RachioSmartHoseTimerHandler:
                                         program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
                                         program["settings"] = program_details.get("settings", {})
 
+                                        # Copy scheduling type fields (daysOfWeek, evenDays, oddDays)
+                                        if "daysOfWeek" in program_details:
+                                            program["daysOfWeek"] = program_details["daysOfWeek"]
+                                        if "evenDays" in program_details:
+                                            program["evenDays"] = program_details["evenDays"]
+                                        if "oddDays" in program_details:
+                                            program["oddDays"] = program_details["oddDays"]
+
                                         # Update valveIds from assignments to get complete list
                                         # (summary API may only show valves from a specific run)
                                         if program_details.get("assignments"):
@@ -489,6 +502,14 @@ class RachioSmartHoseTimerHandler:
                                         program["assignments"] = program_details.get("assignments", [])
                                         program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
                                         program["settings"] = program_details.get("settings", {})
+
+                                        # Copy scheduling type fields (daysOfWeek, evenDays, oddDays)
+                                        if "daysOfWeek" in program_details:
+                                            program["daysOfWeek"] = program_details["daysOfWeek"]
+                                        if "evenDays" in program_details:
+                                            program["evenDays"] = program_details["evenDays"]
+                                        if "oddDays" in program_details:
+                                            program["oddDays"] = program_details["oddDays"]
 
                                         # Update valveIds from assignments to get complete list
                                         # (summary API may only show valves from a specific run)
@@ -535,6 +556,26 @@ class RachioSmartHoseTimerHandler:
                             ]
                             self._sensor_add_entities_callback(new_sensors)
                             _LOGGER.info(f"Added {len(new_sensors)} new program sensors")
+
+                    # Dynamically create buttons for new programs
+                    if hasattr(self, '_program_button_ids') and hasattr(self, '_button_add_entities_callback'):
+                        new_program_buttons = []
+                        for program in self.schedules:
+                            program_id = program.get("id")
+                            if program_id and program_id not in self._program_button_ids:
+                                new_program_buttons.append(program)
+                                self._program_button_ids.add(program_id)
+                                _LOGGER.debug(f"Detected new program for button creation: {program.get('name', program_id)}")
+
+                        if new_program_buttons:
+                            # Import here to avoid circular dependency
+                            from .button import RachioRefreshProgramButton
+                            new_buttons = [
+                                RachioRefreshProgramButton(self.coordinator, self, program)
+                                for program in new_program_buttons
+                            ]
+                            self._button_add_entities_callback(new_buttons)
+                            _LOGGER.info(f"Added {len(new_buttons)} new program refresh buttons")
                 else:
                     _LOGGER.debug(f"No programs configured for device {self.device_id}")
 

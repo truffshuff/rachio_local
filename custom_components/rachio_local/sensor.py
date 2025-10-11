@@ -804,6 +804,12 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         if active:
             return "running"
 
+        # Check if next run has been manually skipped
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+            if summaries.get("next_run") and summaries["next_run"].get("manual_skip"):
+                return "skipped"
+
         return "scheduled"
 
     @property
@@ -853,10 +859,12 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         # Add schedule information (only if schedule data exists and has content)
         if "schedule" in current_program and current_program["schedule"]:
             schedule = current_program["schedule"]
+            _LOGGER.debug(f"Program {self.program_id}: schedule object exists, keys={list(schedule.keys())}")
 
             # Only add schedule_type if it has a value
             if schedule.get("type"):
                 attributes["schedule_type"] = schedule["type"]
+                _LOGGER.debug(f"Program {self.program_id}: Set schedule_type from schedule.type = {schedule['type']}")
 
             # Add start times
             if "startTimes" in schedule:
@@ -903,6 +911,25 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             if "intervalDays" in interval:
                 attributes["interval_days"] = interval["intervalDays"]
             _LOGGER.debug(f"Program {self.program_id}: dailyInterval={interval}")
+
+        # Handle days of week scheduling (alternative to dailyInterval)
+        if "daysOfWeek" in current_program:
+            days_of_week_obj = current_program["daysOfWeek"]
+            if isinstance(days_of_week_obj, dict) and "daysOfWeek" in days_of_week_obj:
+                days_list = days_of_week_obj["daysOfWeek"]
+                if days_list:
+                    # Convert day names to title case for better readability
+                    formatted_days = [day.title() for day in days_list]
+                    attributes["days_of_week"] = ", ".join(formatted_days)
+                    _LOGGER.debug(f"Program {self.program_id}: daysOfWeek={formatted_days}")
+
+        # Handle even/odd days scheduling (alternative to dailyInterval)
+        if "evenDays" in current_program:
+            attributes["schedule_type"] = "Even Days"
+            _LOGGER.debug(f"Program {self.program_id}: Schedule type is Even Days")
+        elif "oddDays" in current_program:
+            attributes["schedule_type"] = "Odd Days"
+            _LOGGER.debug(f"Program {self.program_id}: Schedule type is Odd Days")
 
         if "plannedRuns" in current_program and current_program["plannedRuns"]:
             _LOGGER.debug(f"Program {self.program_id}: plannedRuns present with {len(current_program['plannedRuns'])} run(s)")
@@ -998,5 +1025,17 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 attributes["next_run_duration_seconds"] = next_run["duration_seconds"]
                 attributes["next_run_duration_minutes"] = next_run["duration_seconds"] // 60
                 attributes["next_run_skippable"] = next_run.get("skippable", False)
+
+                # Add manual skip status if present
+                if next_run.get("manual_skip"):
+                    attributes["next_run_skipped"] = True
+
+        # Debug: Log final attributes to verify schedule_type is included
+        if "evenDays" in current_program or "oddDays" in current_program:
+            _LOGGER.debug(f"Program {self.program_id}: Final attributes keys: {list(attributes.keys())}")
+            if "schedule_type" in attributes:
+                _LOGGER.debug(f"Program {self.program_id}: schedule_type = {attributes['schedule_type']}")
+            else:
+                _LOGGER.warning(f"Program {self.program_id}: schedule_type NOT in final attributes!")
 
         return attributes

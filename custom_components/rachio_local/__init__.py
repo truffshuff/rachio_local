@@ -35,7 +35,7 @@ from .controller import RachioControllerHandler
 from .smart_hose_timer import RachioSmartHoseTimerHandler
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON]
 
 
 async def _handle_request(session, method: str, url: str, headers: dict) -> dict:
