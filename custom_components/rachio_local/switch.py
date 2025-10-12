@@ -141,7 +141,7 @@ class RachioZoneSwitch(RachioSwitch):
         super().__init__(coordinator, handler)
         self.zone_id = zone["id"]
         self.zone_name = zone.get("name", f"Zone {zone.get('zoneNumber', '')}")
-        self._attr_name = f"{self.zone_name} Zone"
+        self._attr_name = f"Zone: {self.zone_name}"
         self._attr_unique_id = f"{handler.device_id}_{self.zone_id}_zone"
 
     @property

@@ -101,19 +101,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
-                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id)
+                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id, hass)
             else:
                 handler = RachioControllerHandler(api_key, device)
 
             # Load saved polling intervals from config entry options
             idle_key = f"idle_polling_interval_{device_id}"
             active_key = f"active_polling_interval_{device_id}"
+            program_details_key = f"program_details_refresh_interval_{device_id}"
+
             if idle_key in entry.options:
                 handler.idle_polling_interval = entry.options[idle_key]
                 _LOGGER.info(f"Loaded idle polling interval for {handler.name}: {entry.options[idle_key]}s")
             if active_key in entry.options:
                 handler.active_polling_interval = entry.options[active_key]
                 _LOGGER.info(f"Loaded active polling interval for {handler.name}: {entry.options[active_key]}s")
+            if program_details_key in entry.options:
+                handler._program_details_refresh_interval = entry.options[program_details_key]
+                _LOGGER.info(f"Loaded program details refresh interval for {handler.name}: {entry.options[program_details_key]}s ({entry.options[program_details_key]/60:.0f} minutes)")
 
             handler._fast_poll_count = 0  # Track fast polls
             handler._max_fast_polls = 3   # Max number of 30s polls

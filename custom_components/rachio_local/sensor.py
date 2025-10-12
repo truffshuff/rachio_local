@@ -782,6 +782,19 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         self._attr_icon = "mdi:calendar-clock"
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available (program still exists)."""
+        # Program is unavailable only if it's been confirmed as deleted
+        # Disabled programs should still show as available
+        if hasattr(self.handler, '_deleted_programs'):
+            return self.program_id not in self.handler._deleted_programs
+        # Fallback: check if program exists in schedules
+        for schedule in self.handler.schedules:
+            if schedule.get("id") == self.program_id:
+                return True
+        return False
+
+    @property
     def native_value(self):
         """Return the state of the program."""
         # Find the current program data from handler.schedules

@@ -18,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 # Config entry option keys
 CONF_IDLE_POLLING_INTERVAL = "idle_polling_interval"
 CONF_ACTIVE_POLLING_INTERVAL = "active_polling_interval"
+CONF_PROGRAM_DETAILS_REFRESH_INTERVAL = "program_details_refresh_interval"
 
 
 async def async_setup_entry(
@@ -37,17 +38,20 @@ async def async_setup_entry(
         entities.append(RachioIdlePollingIntervalNumber(coordinator, handler, entry))
         entities.append(RachioActivePollingIntervalNumber(coordinator, handler, entry))
 
+        # Add program details refresh interval entity
+        entities.append(RachioProgramDetailsRefreshIntervalNumber(coordinator, handler, entry))
+
     async_add_entities(entities)
 
 
 class RachioPollingIntervalNumber(CoordinatorEntity, NumberEntity):
     """Base class for Rachio polling interval number entities."""
 
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.BOX
     _attr_native_unit_of_measurement = "s"
     _attr_native_min_value = 30
-    _attr_native_max_value = 600
+    _attr_native_max_value = 2400
     _attr_native_step = 10
 
     def __init__(self, coordinator, handler, entry: ConfigEntry, interval_type: str) -> None:
@@ -72,6 +76,13 @@ class RachioPollingIntervalNumber(CoordinatorEntity, NumberEntity):
 
 class RachioIdlePollingIntervalNumber(RachioPollingIntervalNumber):
     """Number entity for idle polling interval."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "s"
+    _attr_native_min_value = 30
+    _attr_native_max_value = 2400
+    _attr_native_step = 5
 
     def __init__(self, coordinator, handler, entry: ConfigEntry) -> None:
         """Initialize the idle polling interval number."""
@@ -101,6 +112,63 @@ class RachioIdlePollingIntervalNumber(RachioPollingIntervalNumber):
         )
         # Trigger coordinator update to recalculate interval
         await self.coordinator.async_request_refresh()
+
+class RachioProgramDetailsRefreshIntervalNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for program details refresh interval."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "min"
+    _attr_native_min_value = 5  # Minimum 5 minutes
+    _attr_native_max_value = 1440  # Maximum 24 hours
+    _attr_native_step = 5  # Step by 5 minutes
+
+    def __init__(self, coordinator, handler, entry: ConfigEntry) -> None:
+        """Initialize the program details refresh interval number."""
+        super().__init__(coordinator)
+        self.handler = handler
+        self.entry = entry
+        self._attr_unique_id = f"{handler.device_id}_program_details_refresh_interval"
+        self._attr_name = "Program details refresh interval"
+        self._attr_icon = "mdi:timer-cog-outline"
+        self._attr_has_entity_name = True
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self.handler.device_id)},
+            "name": self.handler.name,
+            "manufacturer": "Rachio",
+            "model": self.handler.model,
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value in minutes."""
+        # Convert from seconds to minutes
+        return getattr(self.handler, "_program_details_refresh_interval", 3600) / 60
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the program details refresh interval."""
+        # Convert from minutes to seconds
+        int_value = int(value * 60)
+        old_value_minutes = getattr(self.handler, "_program_details_refresh_interval", 3600) / 60
+
+        self.handler._program_details_refresh_interval = int_value
+
+        # Persist to config entry options
+        config_key = f"{CONF_PROGRAM_DETAILS_REFRESH_INTERVAL}_{self.handler.device_id}"
+        new_options = {**self.entry.options, config_key: int_value}
+        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
+
+        _LOGGER.info(
+            "%s: Program details refresh interval changed from %.0f minutes to %.0f minutes (%d seconds, persisted)",
+            self.handler.name,
+            old_value_minutes,
+            value,
+            int_value,
+        )
 
 
 class RachioActivePollingIntervalNumber(RachioPollingIntervalNumber):

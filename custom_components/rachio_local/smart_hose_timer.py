@@ -5,6 +5,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from aiohttp import ClientSession
+from homeassistant.helpers import entity_registry as er
 from .const import (
     CLOUD_BASE_URL,
     VALVE_GET_BASE_STATION_ENDPOINT,
@@ -14,17 +15,19 @@ from .const import (
     VALVE_STOP,
     PROGRAM_GET,
     PROGRAM_GET_V2,
+    DOMAIN,
 )
 from .utils import get_update_interval
 
 _LOGGER = logging.getLogger(__name__)
 
 class RachioSmartHoseTimerHandler:
-    def __init__(self, api_key: str, device_data: dict, user_id: str = None) -> None:
+    def __init__(self, api_key: str, device_data: dict, user_id: str = None, hass = None) -> None:
         self.api_key = api_key
         self.device_data = device_data
         self.device_id = device_data["id"]
         self.user_id = user_id  # Store user_id for program queries
+        self.hass = hass  # Store hass instance for entity registry access
         self.type = device_data.get("device_type")
         self.name = device_data.get("name") or device_data.get("serialNumber") or "Smart Hose Timer"
         self.model = device_data.get("model", "")
@@ -56,6 +59,7 @@ class RachioSmartHoseTimerHandler:
         self._program_details = {}  # program_id -> {details: {...}, last_fetched: timestamp}
         self._program_details_refresh_interval = 3600  # Refresh hourly (in seconds)
         self._first_update_complete = False  # Track if we've done the initial update
+        self._deleted_programs = set()  # Track programs that have been deleted from Rachio (to avoid repeated API calls)
 
          # Base station specific attributes
         self.base_station_connected = False
@@ -134,6 +138,43 @@ class RachioSmartHoseTimerHandler:
             return data
 
         return None
+
+    async def _remove_program_entities(self, program_ids: list[str]) -> None:
+        """Remove entities for deleted programs from the entity registry.
+
+        This ensures that entities for deleted programs are completely removed,
+        even if they were disabled by default and never enabled by the user.
+
+        Note: This only removes entities for programs that no longer exist in Rachio.
+        Entities that are just disabled by the user will NOT be removed.
+        """
+        if not self.hass or not program_ids:
+            return
+
+        try:
+            registry = er.async_get(self.hass)
+
+            for program_id in program_ids:
+                # Find and remove sensor entity using unique_id (more reliable than entity_id)
+                sensor_unique_id = f"{self.device_id}_program_{program_id}"
+                sensor_entry = registry.async_get_entity_id("sensor", DOMAIN, sensor_unique_id)
+                if sensor_entry:
+                    registry.async_remove(sensor_entry)
+                    _LOGGER.info(f"Removed sensor entity for deleted program {program_id}")
+                else:
+                    _LOGGER.debug(f"Sensor entity for program {program_id} not found in registry (may have been manually removed)")
+
+                # Find and remove button entity
+                button_unique_id = f"{self.device_id}_refresh_program_{program_id}"
+                button_entry = registry.async_get_entity_id("button", DOMAIN, button_unique_id)
+                if button_entry:
+                    registry.async_remove(button_entry)
+                    _LOGGER.info(f"Removed button entity for deleted program {program_id}")
+                else:
+                    _LOGGER.debug(f"Button entity for program {program_id} not found in registry (may have been manually removed)")
+
+        except Exception as e:
+            _LOGGER.warning(f"Error removing entities for deleted programs: {e}")
 
     async def async_update(self) -> None:
         try:
@@ -383,11 +424,17 @@ class RachioSmartHoseTimerHandler:
 
                 # Also check for programs we've seen before but aren't in current summary
                 # (disabled programs won't appear in the summary but we still want to track them)
+                # BUT skip programs that have been confirmed as deleted
                 all_known_program_ids = set(programs_map.keys())
                 for cached_program_id in list(self._program_details.keys()):
                     if cached_program_id not in all_known_program_ids:
+                        # Skip if we've already confirmed this program is deleted
+                        if cached_program_id in self._deleted_programs:
+                            _LOGGER.debug(f"Skipping cached program {cached_program_id} - already confirmed as deleted")
+                            continue
+
                         # This program was cached but isn't in the current summary
-                        # It might be disabled - add it back to our schedules
+                        # It might be disabled - add it back to our schedules with full details
                         cached_details = self._program_details[cached_program_id]["details"]
                         if cached_details and "program" in cached_details:
                             prog = cached_details["program"]
@@ -403,10 +450,35 @@ class RachioSmartHoseTimerHandler:
                                     "enabled": prog.get("enabled", False),
                                     "programColor": prog.get("color", "#00A7E1"),
                                     "skippable": False,
+                                    # Include all detailed fields from cache
+                                    "color": prog.get("color", "#00A7E1"),
+                                    "startOn": prog.get("startOn", {}),
+                                    "dailyInterval": prog.get("dailyInterval", {}),
+                                    "plannedRuns": prog.get("plannedRuns", []),
+                                    "assignments": prog.get("assignments", []),
+                                    "rainSkipEnabled": prog.get("rainSkipEnabled", False),
+                                    "settings": prog.get("settings", {}),
                                 }
-                                _LOGGER.debug(f"Re-added cached program {prog['id']} ({prog.get('name')}) - not in current summary (possibly disabled)")
 
-                self.schedules = list(programs_map.values())
+                                # Copy scheduling type fields
+                                if "daysOfWeek" in prog:
+                                    programs_map[prog["id"]]["daysOfWeek"] = prog["daysOfWeek"]
+                                if "evenDays" in prog:
+                                    programs_map[prog["id"]]["evenDays"] = prog["evenDays"]
+                                if "oddDays" in prog:
+                                    programs_map[prog["id"]]["oddDays"] = prog["oddDays"]
+
+                                _LOGGER.debug(f"Re-added cached program {prog['id']} ({prog.get('name')}) with full details - not in current summary (possibly disabled)")
+
+                # Filter out programs that are known to be deleted
+                all_programs = list(programs_map.values())
+                self.schedules = [p for p in all_programs if p.get("id") not in self._deleted_programs]
+
+                # Log if we filtered out any deleted programs
+                filtered_count = len(all_programs) - len(self.schedules)
+                if filtered_count > 0:
+                    _LOGGER.debug(f"Filtered out {filtered_count} deleted program(s) from schedules")
+
                 if self.schedules:
                     _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
 
@@ -417,6 +489,11 @@ class RachioSmartHoseTimerHandler:
                     for program in self.schedules:
                         program_id = program.get("id")
                         if program_id:
+                            # Skip programs that are known to be deleted
+                            if program_id in self._deleted_programs:
+                                _LOGGER.debug(f"Program {program_id} is in deleted set, skipping API call")
+                                continue
+
                             # Fetch details if:
                             # 1. This is the first update (startup)
                             # 2. Program is new (not in cache)
@@ -481,6 +558,8 @@ class RachioSmartHoseTimerHandler:
                     # Fetch program details for programs that need it
                     if programs_needing_details:
                         _LOGGER.info(f"Fetching details for {len(programs_needing_details)} program(s)")
+                        programs_to_remove = []  # Track programs that failed to fetch (likely deleted)
+
                         for program_id in programs_needing_details:
                             _LOGGER.debug(f"Calling _fetch_program_details for program {program_id}")
                             details = await self._fetch_program_details(session, program_id, force_refresh=True)
@@ -530,7 +609,38 @@ class RachioSmartHoseTimerHandler:
                                         _LOGGER.debug(f"Program {program_id} now has keys: {list(program.keys())}")
                                         break
                             else:
-                                _LOGGER.warning(f"Failed to fetch details for program {program_id} - details returned None or empty")
+                                # Program details returned None - likely deleted from Rachio
+                                _LOGGER.warning(f"Failed to fetch details for program {program_id} - details returned None or empty (program may have been deleted)")
+                                programs_to_remove.append(program_id)
+
+                        # Remove deleted programs from cache and schedules
+                        if programs_to_remove:
+                            for program_id in programs_to_remove:
+                                # Remove from cache
+                                if program_id in self._program_details:
+                                    del self._program_details[program_id]
+                                    _LOGGER.info(f"Removed program {program_id} from cache (deleted from Rachio)")
+
+                                # Remove from schedules list
+                                self.schedules = [p for p in self.schedules if p.get("id") != program_id]
+
+                                # Remove from sensor and button tracking sets
+                                if hasattr(self, '_program_sensor_ids') and program_id in self._program_sensor_ids:
+                                    self._program_sensor_ids.discard(program_id)
+                                    _LOGGER.debug(f"Removed program {program_id} from sensor tracking")
+
+                                if hasattr(self, '_program_button_ids') and program_id in self._program_button_ids:
+                                    self._program_button_ids.discard(program_id)
+                                    _LOGGER.debug(f"Removed program {program_id} from button tracking")
+
+                                # Add to deleted programs set to prevent future API calls
+                                self._deleted_programs.add(program_id)
+                                _LOGGER.debug(f"Added program {program_id} to deleted programs set")
+
+                            # Remove entities from entity registry (for both enabled and disabled entities)
+                            await self._remove_program_entities(programs_to_remove)
+
+                            _LOGGER.info(f"Removed {len(programs_to_remove)} deleted program(s) from integration")
 
                     # Mark first update as complete after fetching all program details
                     if not self._first_update_complete:
@@ -559,9 +669,11 @@ class RachioSmartHoseTimerHandler:
 
                     # Dynamically create buttons for new programs
                     if hasattr(self, '_program_button_ids') and hasattr(self, '_button_add_entities_callback'):
+                        _LOGGER.debug(f"Button creation check: has _program_button_ids={hasattr(self, '_program_button_ids')}, has callback={hasattr(self, '_button_add_entities_callback')}, tracked_ids={self._program_button_ids if hasattr(self, '_program_button_ids') else 'N/A'}")
                         new_program_buttons = []
                         for program in self.schedules:
                             program_id = program.get("id")
+                            _LOGGER.debug(f"Checking program {program_id} ({program.get('name')}): in_tracked_set={program_id in self._program_button_ids if program_id else 'N/A'}")
                             if program_id and program_id not in self._program_button_ids:
                                 new_program_buttons.append(program)
                                 self._program_button_ids.add(program_id)
@@ -576,6 +688,8 @@ class RachioSmartHoseTimerHandler:
                             ]
                             self._button_add_entities_callback(new_buttons)
                             _LOGGER.info(f"Added {len(new_buttons)} new program refresh buttons")
+                        else:
+                            _LOGGER.debug(f"No new buttons to create (all {len(self.schedules)} programs already tracked)")
                 else:
                     _LOGGER.debug(f"No programs configured for device {self.device_id}")
 
