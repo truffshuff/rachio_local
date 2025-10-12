@@ -1102,11 +1102,6 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["start_notifications"] = settings.get("startOnNotificationsEnabled", False)
             attributes["end_notifications"] = settings.get("endOnNotificationsEnabled", False)
 
-            # Add startOnDate if available
-            if "startOnDate" in settings:
-                start_on_date = settings["startOnDate"]
-                attributes["settings_start_on_date"] = f"{start_on_date.get('year', '')}-{start_on_date.get('month', ''):02d}-{start_on_date.get('day', ''):02d}"
-
         # Add run summary information if available
         if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
             summaries = self.handler.program_run_summaries[self.program_id]
