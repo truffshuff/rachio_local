@@ -205,7 +205,8 @@ class RachioZoneStatusSensor(RachioBaseEntity, SensorEntity):
     def native_value(self):
         """Return the state of the sensor (optimistic or real)."""
         is_on = self.handler.is_zone_optimistically_on(self.zone_id)
-        _LOGGER.debug(f"[ZoneStatusSensor] native_value: zone_id={self.zone_id}, is_on={is_on}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        # _LOGGER.debug(f"[ZoneStatusSensor] native_value: zone_id={self.zone_id}, is_on={is_on}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
         return STATE_WATERING if is_on else STATE_NOT_WATERING
 
 class RachioZoneLastWateredSensor(RachioBaseEntity, SensorEntity):
@@ -480,15 +481,16 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
     def native_value(self):
         # Show API calls remaining in current window
         try:
-            _LOGGER.debug(f"[APICallSensor] raw values: limit={self.handler.api_rate_limit}, remaining={self.handler.api_rate_remaining}, reset={self.handler.api_rate_reset}")
+            # Verbose debug - commented out to reduce log noise (property called frequently)
+            # _LOGGER.debug(f"[APICallSensor] raw values: limit={self.handler.api_rate_limit}, remaining={self.handler.api_rate_remaining}, reset={self.handler.api_rate_reset}")
 
             if self.handler.api_rate_limit is None or self.handler.api_rate_remaining is None:
-                _LOGGER.debug(f"[APICallSensor] Missing rate limit headers")
+                # _LOGGER.debug(f"[APICallSensor] Missing rate limit headers")
                 return None
 
             remaining = int(self.handler.api_rate_remaining)
 
-            _LOGGER.debug(f"[APICallSensor] calculated: remaining={remaining}")
+            # _LOGGER.debug(f"[APICallSensor] calculated: remaining={remaining}")
             return remaining
         except (ValueError, TypeError) as e:
             _LOGGER.error(f"[APICallSensor] Error calculating value: {e}")

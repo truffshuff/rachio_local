@@ -95,7 +95,8 @@ class RachioControllerHandler:
                 url = f"{API_BASE_URL}/{DEVICE_GET_ENDPOINT.format(id=self.device_id)}"
                 data = await self._make_request(session, url)
                 _LOGGER.debug(f"[POLL] Device info: status={data.get('status') if data else 'None'}, zones={len(data.get('zones', []) if data else [])}, schedules={len(data.get('scheduleRules', []) if data else [])}")
-                _LOGGER.debug(f"[POLL] Full device API response: {data}")
+                # Security: Commented out - logs entire API response which may contain sensitive data
+                # _LOGGER.debug(f"[POLL] Full device API response: {data}")
                 _LOGGER.debug(f"[POLL] Rate limit: remaining={self.api_rate_remaining}, reset={self.api_rate_reset}")
                 if data:
                     self.device_data = data
@@ -133,7 +134,9 @@ class RachioControllerHandler:
                 # Current schedule (for schedule info and fallback)
                 url = f"{API_BASE_URL}/{DEVICE_CURRENT_SCHEDULE.format(id=self.device_id)}"
                 data = await self._make_request(session, url)
-                _LOGGER.warning(f"[DEBUG] /current_schedule API response: {data}")
+                # Security: Commented out - logs entire API response which may contain sensitive data
+                # Also fixed incorrect log level (was WARNING, should be debug)
+                # _LOGGER.debug(f"[DEBUG] /current_schedule API response: {data}")
                 # --- AUTHORITATIVE: Use only /current_schedule for running_zones ---
                 running_zones = {}
                 running_schedules = {}
@@ -191,7 +194,8 @@ class RachioControllerHandler:
                 # Use only /current_schedule for running_zones and running_schedules
                 self.running_zones = running_zones
                 self.running_schedules = running_schedules
-                _LOGGER.warning(f"[DEBUG] running_zones after poll: {self.running_zones}")
+                # Fixed incorrect log level (was WARNING, should be debug)
+                # _LOGGER.debug(f"[DEBUG] running_zones after poll: {self.running_zones}")
 
             # Reconcile optimistic state: clear any pending starts if not running
             now = time.time()
@@ -299,9 +303,10 @@ class RachioControllerHandler:
         now = time.time()
         pending = self._pending_start.get(zone_id, 0) > now
         running = zone_id in self.running_zones
-        _LOGGER.debug(f"[OPTIMISTIC] is_zone_optimistically_on: zone_id={zone_id}, running={running}, pending={pending}, now={now}, pending_until={self._pending_start.get(zone_id)}, running_zones={list(self.running_zones.keys())}")
+        # Verbose debug - commented out to reduce log noise (called frequently)
+        # _LOGGER.debug(f"[OPTIMISTIC] is_zone_optimistically_on: zone_id={zone_id}, running={running}, pending={pending}, now={now}, pending_until={self._pending_start.get(zone_id)}, running_zones={list(self.running_zones.keys())}")
         # Extra debug: print full running_zones dict for troubleshooting
-        _LOGGER.debug(f"[OPTIMISTIC] running_zones full: {self.running_zones}")
+        # _LOGGER.debug(f"[OPTIMISTIC] running_zones full: {self.running_zones}")
         return running or pending
 
     @staticmethod

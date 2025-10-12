@@ -124,7 +124,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             handler._max_fast_polls = 3   # Max number of 30s polls
 
             async def _async_update(handler=handler):
-                _LOGGER.warning("[COORDINATOR] _async_update called for %s at %s", handler.name, datetime.now().isoformat())
+                # Fixed incorrect log level (was WARNING, should be debug) - commented out to reduce log noise
+                # _LOGGER.debug("[COORDINATOR] _async_update called for %s at %s", handler.name, datetime.now().isoformat())
                 await handler.async_update()
                 new_interval = handler._get_update_interval()
                 # Switch to dynamic interval after max fast polls

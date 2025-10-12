@@ -57,7 +57,7 @@ class RachioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "rate_limit"
                 else:
                     errors["base"] = "cannot_connect"
-                _LOGGER.exception("Validation failed")
+                _LOGGER.exception("API key validation failed for Rachio connection")
 
         return self.async_show_form(
             step_id="user",

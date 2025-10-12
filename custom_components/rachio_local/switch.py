@@ -148,7 +148,8 @@ class RachioZoneSwitch(RachioSwitch):
     def is_on(self):
         # Use handler's shared optimistic state logic
         state = self.handler.is_zone_optimistically_on(self.zone_id)
-        _LOGGER.debug(f"[ZoneSwitch] is_on check: zone_id={self.zone_id}, is_on={state}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        # Commented out to reduce log noise (property called frequently)
+        # _LOGGER.debug(f"[ZoneSwitch] is_on check: zone_id={self.zone_id}, is_on={state}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
         return state
 
     @property
@@ -171,7 +172,8 @@ class RachioZoneSwitch(RachioSwitch):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        _LOGGER.debug(f"[ZoneSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Commented out to reduce log noise
+        # _LOGGER.debug(f"[ZoneSwitch] async_turn_off called: zone_id={self.zone_id}")
         # Always call async_stop_zone - it will handle whether the zone is actually running
         # We need to clear optimistic state even if the zone isn't actually running
         await self.handler.async_stop_zone(self.zone_id)
@@ -274,7 +276,8 @@ class RachioValveSwitch(RachioZoneSwitch):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        _LOGGER.debug(f"[ValveSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Commented out to reduce log noise
+        # _LOGGER.debug(f"[ValveSwitch] async_turn_off called: zone_id={self.zone_id}")
         # Always call async_stop_zone - it will handle whether the valve is actually running
         # We need to clear optimistic state even if the valve isn't actually running
         await self.handler.async_stop_zone(self.zone_id)

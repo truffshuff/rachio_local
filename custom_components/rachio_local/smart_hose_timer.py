@@ -93,8 +93,8 @@ class RachioSmartHoseTimerHandler:
         if "X-RateLimit-Reset" in resp.headers:
             self.api_rate_reset = resp.headers.get("X-RateLimit-Reset")
 
-        # Log rate limit headers for debugging
-        _LOGGER.debug(f"[_make_request] Rate limit headers: Limit={self.api_rate_limit}, Remaining={self.api_rate_remaining}, Reset={self.api_rate_reset}")
+        # Commented out to reduce log noise (called on every API request)
+        # _LOGGER.debug(f"[_make_request] Rate limit headers: Limit={self.api_rate_limit}, Remaining={self.api_rate_remaining}, Reset={self.api_rate_reset}")
 
         if resp.status == 404:
             _LOGGER.debug("%s: No data found at %s", self.name, url)
@@ -120,12 +120,14 @@ class RachioSmartHoseTimerHandler:
             cached = self._program_details[program_id]
             age = current_time - cached["last_fetched"]
             if age < self._program_details_refresh_interval:
-                _LOGGER.debug(f"Using cached program details for {program_id} (age: {age:.0f}s)")
+                # Commented out to reduce log noise (called frequently during updates)
+                # _LOGGER.debug(f"Using cached program details for {program_id} (age: {age:.0f}s)")
                 return cached["details"]
 
         # Fetch fresh data
         url = f"{CLOUD_BASE_URL}/{PROGRAM_GET_V2.format(id=program_id)}"
-        _LOGGER.debug(f"Fetching fresh program details for {program_id}")
+        # Commented out to reduce log noise
+        # _LOGGER.debug(f"Fetching fresh program details for {program_id}")
         data = await self._make_request(session, url)
 
         if data:
@@ -134,7 +136,8 @@ class RachioSmartHoseTimerHandler:
                 "details": data,
                 "last_fetched": current_time
             }
-            _LOGGER.debug(f"Cached program details for {program_id}")
+            # Commented out to reduce log noise
+            # _LOGGER.debug(f"Cached program details for {program_id}")
             return data
 
         return None
@@ -178,7 +181,8 @@ class RachioSmartHoseTimerHandler:
 
     async def async_update(self) -> None:
         try:
-            _LOGGER.debug("Updating smart hose timer: %s", self.device_id)
+            # Commented out to reduce log noise (called on every update)
+            # _LOGGER.debug("Updating smart hose timer: %s", self.device_id)
             async with ClientSession() as session:
                 # Get base station info
                 url = f"{CLOUD_BASE_URL}{VALVE_GET_BASE_STATION_ENDPOINT.format(id=self.device_id)}"
@@ -474,13 +478,15 @@ class RachioSmartHoseTimerHandler:
                 all_programs = list(programs_map.values())
                 self.schedules = [p for p in all_programs if p.get("id") not in self._deleted_programs]
 
-                # Log if we filtered out any deleted programs
-                filtered_count = len(all_programs) - len(self.schedules)
-                if filtered_count > 0:
-                    _LOGGER.debug(f"Filtered out {filtered_count} deleted program(s) from schedules")
+                # Commented out to reduce log noise
+                # filtered_count = len(all_programs) - len(self.schedules)
+                # if filtered_count > 0:
+                #     _LOGGER.debug(f"Filtered out {filtered_count} deleted program(s) from schedules")
 
                 if self.schedules:
-                    _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
+                    # Commented out to reduce log noise (called on every update)
+                    # _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")
+                    pass
 
                     # Fetch detailed program information for new programs and hourly refresh
                     programs_needing_details = []
@@ -491,7 +497,8 @@ class RachioSmartHoseTimerHandler:
                         if program_id:
                             # Skip programs that are known to be deleted
                             if program_id in self._deleted_programs:
-                                _LOGGER.debug(f"Program {program_id} is in deleted set, skipping API call")
+                                # Commented out to reduce log noise
+                                # _LOGGER.debug(f"Program {program_id} is in deleted set, skipping API call")
                                 continue
 
                             # Fetch details if:
@@ -503,15 +510,18 @@ class RachioSmartHoseTimerHandler:
                             if not self._first_update_complete:
                                 # Force refresh all programs on first update
                                 should_fetch = True
-                                _LOGGER.debug(f"Program {program_id} fetching on startup")
+                                # Commented out to reduce log noise
+                                # _LOGGER.debug(f"Program {program_id} fetching on startup")
                             elif program_id not in self._program_details:
                                 should_fetch = True
-                                _LOGGER.debug(f"Program {program_id} is new, will fetch details")
+                                # Commented out to reduce log noise
+                                # _LOGGER.debug(f"Program {program_id} is new, will fetch details")
                             else:
                                 cache_age = current_time - self._program_details[program_id]["last_fetched"]
                                 if cache_age >= self._program_details_refresh_interval:
                                     should_fetch = True
-                                    _LOGGER.debug(f"Program {program_id} cache is stale ({cache_age:.0f}s), will refresh")
+                                    # Commented out to reduce log noise
+                                    # _LOGGER.debug(f"Program {program_id} cache is stale ({cache_age:.0f}s), will refresh")
                                 else:
                                     # Apply cached details to program if cache is still valid
                                     cached_details = self._program_details[program_id]["details"]
@@ -707,14 +717,14 @@ class RachioSmartHoseTimerHandler:
                     state = valve.get("state", {}).get("reportedState", {})
                     last_action = state.get("lastWateringAction", {})
 
-                    # Log valve status for debugging
-                    _LOGGER.debug(f"Valve {valve_id}: has lastWateringAction={last_action is not None and len(last_action) > 0}, has start={last_action.get('start') is not None}, has duration={last_action.get('durationSeconds') is not None}")
+                    # Commented out to reduce log noise (verbose debugging)
+                    # _LOGGER.debug(f"Valve {valve_id}: has lastWateringAction={last_action is not None and len(last_action) > 0}, has start={last_action.get('start') is not None}, has duration={last_action.get('durationSeconds') is not None}")
 
                     # Check if there's a watering action with start time and duration
                     if last_action.get("start") and last_action.get("durationSeconds"):
-                        # Log all available fields in lastWateringAction for debugging
-                        if last_action:
-                            _LOGGER.debug(f"Valve {valve_id} lastWateringAction keys: {list(last_action.keys())}")
+                        # Commented out to reduce log noise (verbose debugging)
+                        # if last_action:
+                        #     _LOGGER.debug(f"Valve {valve_id} lastWateringAction keys: {list(last_action.keys())}")
                         try:
                             # Parse the start time (ISO 8601 format)
                             start_str = last_action["start"]
@@ -742,7 +752,8 @@ class RachioSmartHoseTimerHandler:
                                 force_stop_time = self._force_stopped[valve_id]
                                 time_since_stop = (current_time - force_stop_time).total_seconds()
                                 if time_since_stop < 30:  # Ignore API data for 30 seconds after force stop
-                                    _LOGGER.debug(f"Valve {valve_id} force stopped {time_since_stop:.0f}s ago, ignoring API data")
+                                    # Commented out to reduce log noise
+                                    # _LOGGER.debug(f"Valve {valve_id} force stopped {time_since_stop:.0f}s ago, ignoring API data")
                                     continue
                                 else:
                                     # Clear old force stop tracking
@@ -756,7 +767,8 @@ class RachioSmartHoseTimerHandler:
                                 # If the API action ended before our manual stop AND it's not currently running,
                                 # this is stale data - ignore it
                                 if end_time <= last_completed and start_time <= current_time <= end_time_buffer:
-                                    _LOGGER.debug(f"Valve {valve_id} ignoring stale API data showing as running (ended {end_time} vs last completed {last_completed})")
+                                    # Commented out to reduce log noise
+                                    # _LOGGER.debug(f"Valve {valve_id} ignoring stale API data showing as running (ended {end_time} vs last completed {last_completed})")
                                     continue
 
                             # Check if currently watering
@@ -772,7 +784,8 @@ class RachioSmartHoseTimerHandler:
                                 }
                                 # Track expected end time for completion detection
                                 self._expected_end_times[valve_id] = end_time
-                                _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining, program_id={running_zones[valve_id].get('program_id')}, expected_end={end_time}")
+                                # Commented out to reduce log noise (called on every update when valve is running)
+                                # _LOGGER.debug(f"Valve {valve_id} is running, {remaining_seconds:.0f}s remaining, program_id={running_zones[valve_id].get('program_id')}, expected_end={end_time}")
                             elif current_time > end_time_buffer:
                                 # Watering has completed, record/update completion time
                                 # Always update to ensure we capture the most recent completion
@@ -781,7 +794,9 @@ class RachioSmartHoseTimerHandler:
                                     self._last_watering_completed[valve_id] = end_time
                                     _LOGGER.info(f"Valve {valve_id} watering completed at {end_time} (was: {old_completed})")
                                 else:
-                                    _LOGGER.debug(f"Valve {valve_id} watering already completed at {old_completed}, API end_time {end_time} is not newer")
+                                    # Commented out to reduce log noise
+                                    # _LOGGER.debug(f"Valve {valve_id} watering already completed at {old_completed}, API end_time {end_time} is not newer")
+                                    pass
                         except (ValueError, KeyError) as e:
                             _LOGGER.warning(f"Error parsing watering times for valve {valve_id}: {e}")
 
@@ -821,11 +836,11 @@ class RachioSmartHoseTimerHandler:
                 # Detect running schedules by matching running valves to programs based on timing
                 running_schedules = {}
 
-                # Debug: Log all running valves
-                if running_zones:
-                    _LOGGER.debug(f"Currently running valves: {list(running_zones.keys())}")
-                    for valve_id, zone_data in running_zones.items():
-                        _LOGGER.debug(f"  Valve {valve_id}: start_time={zone_data.get('start_time')}, remaining={zone_data.get('remaining'):.0f}s")
+                # Commented out to reduce log noise (verbose debugging)
+                # if running_zones:
+                #     _LOGGER.debug(f"Currently running valves: {list(running_zones.keys())}")
+                #     for valve_id, zone_data in running_zones.items():
+                #         _LOGGER.debug(f"  Valve {valve_id}: start_time={zone_data.get('start_time')}, remaining={zone_data.get('remaining'):.0f}s")
 
                 # First, try to match running valves to programs using valve_run_summaries
                 # This contains the actual program association from the API
@@ -834,7 +849,8 @@ class RachioSmartHoseTimerHandler:
                 for valve_id, zone_data in running_zones.items():
                     valve_start_time = zone_data.get("start_time")
                     if not valve_start_time:
-                        _LOGGER.debug(f"Valve {valve_id} has no start_time, skipping program matching")
+                        # Commented out to reduce log noise
+                        # _LOGGER.debug(f"Valve {valve_id} has no start_time, skipping program matching")
                         continue
 
                     # First check if lastWateringAction directly provides program_id
@@ -847,17 +863,20 @@ class RachioSmartHoseTimerHandler:
                     # Check if this valve has a recent run in valve_run_summaries that matches timing
                     if valve_id in self.valve_run_summaries:
                         summaries = self.valve_run_summaries[valve_id]
-                        _LOGGER.debug(f"Valve {valve_id} (started at {valve_start_time}) checking run summaries - previous_run: {summaries.get('previous_run') is not None}, next_run: {summaries.get('next_run') is not None}")
+                        # Commented out to reduce log noise (verbose debugging)
+                        # _LOGGER.debug(f"Valve {valve_id} (started at {valve_start_time}) checking run summaries - previous_run: {summaries.get('previous_run') is not None}, next_run: {summaries.get('next_run') is not None}")
 
                         # Check previous run (most recent past run - could be currently running)
                         prev_run = summaries.get("previous_run")
                         if prev_run:
-                            _LOGGER.debug(f"  previous_run: source={prev_run.get('source')}, start={prev_run.get('start')}, program_id={prev_run.get('program_id')}")
+                            # Commented out to reduce log noise (verbose debugging)
+                            # _LOGGER.debug(f"  previous_run: source={prev_run.get('source')}, start={prev_run.get('start')}, program_id={prev_run.get('program_id')}")
                             if prev_run.get("source") == "program":
                                 run_start = prev_run.get("start")
                                 if run_start:
                                     time_diff = abs((run_start - valve_start_time).total_seconds())
-                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 3600s)")
+                                    # Commented out to reduce log noise (verbose debugging)
+                                    # _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 3600s)")
                                     # If the run start time is within 1 hour of the valve start time, it's a match
                                     # Increased threshold to handle API lag for manual program runs
                                     if time_diff < 3600:
@@ -870,12 +889,14 @@ class RachioSmartHoseTimerHandler:
                         # Check next run (scheduled future run - might have just started)
                         next_run = summaries.get("next_run")
                         if next_run:
-                            _LOGGER.debug(f"  next_run: source={next_run.get('source')}, start={next_run.get('start')}, program_id={next_run.get('program_id')}")
+                            # Commented out to reduce log noise (verbose debugging)
+                            # _LOGGER.debug(f"  next_run: source={next_run.get('source')}, start={next_run.get('start')}, program_id={next_run.get('program_id')}")
                             if next_run.get("source") == "program":
                                 run_start = next_run.get("start")
                                 if run_start:
                                     time_diff = abs((run_start - valve_start_time).total_seconds())
-                                    _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 1800s)")
+                                    # Commented out to reduce log noise (verbose debugging)
+                                    # _LOGGER.debug(f"  Time difference: {time_diff:.0f}s (threshold: 1800s)")
                                     # If the scheduled start time is within 30 minutes of the valve start time, it's a match
                                     if time_diff < 1800:
                                         program_id = next_run.get("program_id")
@@ -884,9 +905,12 @@ class RachioSmartHoseTimerHandler:
                                             _LOGGER.info(f"Valve {valve_id} matched to program {program_id} via next_run timing (diff: {time_diff:.0f}s)")
                                             continue
 
-                        _LOGGER.debug(f"Valve {valve_id} could not be matched to any program (no timing match)")
+                        # Commented out to reduce log noise
+                        # _LOGGER.debug(f"Valve {valve_id} could not be matched to any program (no timing match)")
                     else:
-                        _LOGGER.debug(f"Valve {valve_id} has no run summaries")
+                        # Commented out to reduce log noise
+                        # _LOGGER.debug(f"Valve {valve_id} has no run summaries")
+                        pass
 
                     # Fallback: Match based on program's next scheduled run time (from plannedRuns)
                     if valve_id not in valve_to_program_map:
