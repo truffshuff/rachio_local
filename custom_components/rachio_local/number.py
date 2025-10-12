@@ -16,9 +16,11 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Config entry option keys
+
 CONF_IDLE_POLLING_INTERVAL = "idle_polling_interval"
 CONF_ACTIVE_POLLING_INTERVAL = "active_polling_interval"
 CONF_PROGRAM_DETAILS_REFRESH_INTERVAL = "program_details_refresh_interval"
+CONF_SUMMARY_END_DAYS = "summary_end_days"
 
 
 async def async_setup_entry(
@@ -41,7 +43,55 @@ async def async_setup_entry(
         # Add program details refresh interval entity
         entities.append(RachioProgramDetailsRefreshIntervalNumber(coordinator, handler, entry))
 
+
+
+    # Add summary end days number per device (base station)
+    for device_id, device_info in data["devices"].items():
+        entities.append(RachioSummaryEndDaysNumber(entry, device_id, device_info["handler"]))
+
     async_add_entities(entities)
+
+# Global number entity for summary end days (future days for getValveDayViews)
+class RachioSummaryEndDaysNumber(NumberEntity):
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "days"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 30
+    _attr_native_step = 1
+    _attr_has_entity_name = True
+    _attr_name = "Summary end days (future)"
+    _attr_icon = "mdi:calendar-range"
+
+    def __init__(self, entry: ConfigEntry, device_id: str, handler) -> None:
+        self.entry = entry
+        self.device_id = device_id
+        self.handler = handler
+        self._attr_unique_id = f"{device_id}_summary_end_days"
+
+
+    @property
+    def native_value(self) -> float:
+        # Device-specific config key using constant
+        config_key = f"{CONF_SUMMARY_END_DAYS}_{self.device_id}"
+        return self.entry.options.get(config_key, 7)
+
+
+    async def async_set_native_value(self, value: float) -> None:
+        int_value = int(value)
+        config_key = f"{CONF_SUMMARY_END_DAYS}_{self.device_id}"
+        new_options = {**self.entry.options, config_key: int_value}
+        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
+        _LOGGER.info("Summary end days for %s changed to %d (persisted)", self.device_id, int_value)
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.device_id)},
+            "name": self.handler.name,
+            "manufacturer": "Rachio",
+            "model": self.handler.model,
+        }
 
 
 class RachioPollingIntervalNumber(CoordinatorEntity, NumberEntity):

@@ -22,12 +22,13 @@ from .utils import get_update_interval
 _LOGGER = logging.getLogger(__name__)
 
 class RachioSmartHoseTimerHandler:
-    def __init__(self, api_key: str, device_data: dict, user_id: str = None, hass = None) -> None:
+    def __init__(self, api_key: str, device_data: dict, user_id: str = None, hass = None, config_entry = None) -> None:
         self.api_key = api_key
         self.device_data = device_data
         self.device_id = device_data["id"]
         self.user_id = user_id  # Store user_id for program queries
         self.hass = hass  # Store hass instance for entity registry access
+        self.config_entry = config_entry  # Store config entry for direct option access
         self.type = device_data.get("device_type")
         self.name = device_data.get("name") or device_data.get("serialNumber") or "Smart Hose Timer"
         self.model = device_data.get("model", "")
@@ -238,9 +239,19 @@ class RachioSmartHoseTimerHandler:
                 # Query the next 7 days to get scheduled program information
                 url = f"{CLOUD_BASE_URL}/{SUMMARY_VALVE_VIEWS}"
                 today = datetime.now()
-                # Query 1 day in the past and 7 days in the future to capture all active programs
+
+                # Query 1 day in the past and N days in the future (user-configurable)
                 start_date = today - timedelta(days=1)
-                end_date = today + timedelta(days=7)
+                # Try to get summary_end_days from config entry options (per device)
+                summary_end_days = 7
+                config_options_debug = None
+                if self.config_entry is not None:
+                    from .number import CONF_SUMMARY_END_DAYS
+                    config_key = f"{CONF_SUMMARY_END_DAYS}_{self.device_id}"
+                    config_options_debug = dict(self.config_entry.options)
+                    summary_end_days = self.config_entry.options.get(config_key, 7)
+                _LOGGER.debug(f"[DEBUG] Config entry options for {self.device_id}: {config_options_debug}, using summary_end_days={summary_end_days}")
+                end_date = today + timedelta(days=summary_end_days)
 
                 payload = {
                     "start": {
@@ -258,7 +269,9 @@ class RachioSmartHoseTimerHandler:
                     }
                 }
 
+
                 data = await self._make_request(session, url, method="POST", json_data=payload)
+                _LOGGER.debug(f"getValveDayViews API response (baseStationId={self.device_id}, end_days={summary_end_days}): {data}")
 
                 # Extract unique programs from the summary data
                 # Also parse run summaries for valves and programs

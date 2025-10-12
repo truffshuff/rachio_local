@@ -101,7 +101,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for device in devices:
             device_id = device["id"]
             if device.get("device_type") == "SMART_HOSE_TIMER":
-                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id, hass)
+                handler = RachioSmartHoseTimerHandler(api_key, device, auth.user_id, hass, entry)
             else:
                 handler = RachioControllerHandler(api_key, device)
 
