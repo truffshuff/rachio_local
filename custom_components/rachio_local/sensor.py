@@ -8,6 +8,7 @@ from typing import Any
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
@@ -476,6 +477,7 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
         self._attr_name = f"{handler.name} API Calls Remaining"
         self._attr_unique_id = f"{handler.device_id}_api_calls_remaining"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self):
