@@ -55,6 +55,7 @@ class RachioSmartHoseTimerHandler:
         # Run history summaries (populated from API)
         self.valve_run_summaries = {}  # valve_id -> {previous_run: {...}, next_run: {...}}
         self.program_run_summaries = {}  # program_id -> {previous_run: {...}, next_run: {...}}
+        self.valve_day_views = []  # Raw valve day views data for calendar
 
         # Program details cache with timestamps (for enabled/disabled status and other details)
         self._program_details = {}  # program_id -> {details: {...}, last_fetched: timestamp}
@@ -272,6 +273,9 @@ class RachioSmartHoseTimerHandler:
 
                 data = await self._make_request(session, url, method="POST", json_data=payload)
                 _LOGGER.debug(f"getValveDayViews API response (baseStationId={self.device_id}, end_days={summary_end_days}): {data}")
+
+                # Store raw valve_day_views data for calendar
+                self.valve_day_views = data.get("valveDayViews", []) if data else []
 
                 # Extract unique programs from the summary data
                 # Also parse run summaries for valves and programs
