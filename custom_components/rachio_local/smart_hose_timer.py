@@ -483,6 +483,80 @@ class RachioSmartHoseTimerHandler:
                 # if filtered_count > 0:
                 #     _LOGGER.debug(f"Filtered out {filtered_count} deleted program(s) from schedules")
 
+                # During first update (startup), check for program entities that exist but aren't in schedules
+                # This handles disabled programs that have entities from a previous session
+                if not self._first_update_complete and self.hass:
+                    try:
+                        registry = er.async_get(self.hass)
+                        # Find all program sensor entities for this device
+                        for entry in registry.entities.values():
+                            if entry.domain == "sensor" and entry.platform == DOMAIN:
+                                # Check if this is a program sensor for our device
+                                if entry.unique_id and entry.unique_id.startswith(f"{self.device_id}_program_"):
+                                    # Extract program_id from unique_id
+                                    program_id = entry.unique_id.replace(f"{self.device_id}_program_", "")
+
+                                    # Check if this program is already in our schedules
+                                    program_exists = any(p.get("id") == program_id for p in self.schedules)
+
+                                    if not program_exists and program_id not in self._deleted_programs:
+                                        # This program has an entity but isn't in schedules
+                                        # It's likely disabled - fetch its details
+                                        _LOGGER.info(f"Found existing entity for program {program_id} not in schedules - will fetch details (likely disabled)")
+
+                                        # Fetch the program details
+                                        url = f"{CLOUD_BASE_URL}/{PROGRAM_GET_V2.format(id=program_id)}"
+                                        details = await self._make_request(session, url)
+
+                                        if details and "program" in details:
+                                            prog = details["program"]
+                                            # Build valve IDs from assignments
+                                            valve_ids = [a.get("entityId") for a in prog.get("assignments", []) if a.get("entityId")]
+
+                                            # Add to programs_map
+                                            program_data = {
+                                                "id": prog["id"],
+                                                "name": prog.get("name", "Unknown Program"),
+                                                "valveIds": valve_ids,
+                                                "active": False,
+                                                "enabled": prog.get("enabled", False),
+                                                "programColor": prog.get("color", "#00A7E1"),
+                                                "skippable": False,
+                                                "color": prog.get("color", "#00A7E1"),
+                                                "startOn": prog.get("startOn", {}),
+                                                "dailyInterval": prog.get("dailyInterval", {}),
+                                                "plannedRuns": prog.get("plannedRuns", []),
+                                                "assignments": prog.get("assignments", []),
+                                                "rainSkipEnabled": prog.get("rainSkipEnabled", False),
+                                                "settings": prog.get("settings", {}),
+                                            }
+
+                                            # Copy scheduling type fields
+                                            if "daysOfWeek" in prog:
+                                                program_data["daysOfWeek"] = prog["daysOfWeek"]
+                                            if "evenDays" in prog:
+                                                program_data["evenDays"] = prog["evenDays"]
+                                            if "oddDays" in prog:
+                                                program_data["oddDays"] = prog["oddDays"]
+
+                                            # Add to schedules
+                                            self.schedules.append(program_data)
+
+                                            # Cache the details
+                                            current_time_cache = time.time()
+                                            self._program_details[program_id] = {
+                                                "details": details,
+                                                "last_fetched": current_time_cache
+                                            }
+
+                                            _LOGGER.info(f"Added disabled program '{prog.get('name')}' ({program_id[:8]}...) to schedules from entity registry")
+                                        elif details is None:
+                                            # Program was deleted - mark it
+                                            self._deleted_programs.add(program_id)
+                                            _LOGGER.info(f"Program {program_id} from entity registry appears to be deleted")
+                    except Exception as e:
+                        _LOGGER.warning(f"Error checking entity registry for missing programs: {e}")
+
                 if self.schedules:
                     # Commented out to reduce log noise (called on every update)
                     # _LOGGER.debug(f"Found {len(self.schedules)} programs for device {self.device_id}")

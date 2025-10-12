@@ -90,11 +90,27 @@ class RachioRefreshProgramButton(RachioBaseButtonEntity):
         # Program is unavailable only if it's been confirmed as deleted
         # Disabled programs should still show as available
         if hasattr(self.handler, '_deleted_programs'):
-            return self.program_id not in self.handler._deleted_programs
-        # Fallback: check if program exists in schedules
+            if self.program_id in self.handler._deleted_programs:
+                return False
+
+        # Check if program exists in schedules
         for schedule in self.handler.schedules:
             if schedule.get("id") == self.program_id:
                 return True
+
+        # Check if program exists in cache (handles disabled programs during startup)
+        # This prevents entities from becoming unavailable during HA restart
+        # before the first coordinator update completes
+        if hasattr(self.handler, '_program_details'):
+            if self.program_id in self.handler._program_details:
+                return True
+
+        # During initial startup, give benefit of the doubt
+        # The entity will be marked unavailable later if program is truly deleted
+        if hasattr(self.handler, '_first_update_complete'):
+            if not self.handler._first_update_complete:
+                return True
+
         return False
 
     async def async_press(self) -> None:
