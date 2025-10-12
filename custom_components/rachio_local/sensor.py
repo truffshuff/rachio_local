@@ -826,26 +826,30 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
 
         if not current_program:
             return "unavailable"
-            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: unavailable (no current_program)")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)       
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: unavailable (no current_program)")
             return "unavailable"
         # Check if program is enabled (from getProgramV2 API)
         enabled = current_program.get("enabled", True)
         if not enabled:
             return "disabled"
-            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: disabled")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: disabled")
             return "disabled"
         # Check if program is currently active (running)
         active = current_program.get("active", False)
         if active:
             return "running"
-            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: running")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: running")
             return "running"
         # Check if next run has been manually skipped
         if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
             summaries = self.handler.program_run_summaries[self.program_id]
             if summaries.get("next_run") and summaries["next_run"].get("manual_skip"):
                 return "skipped"
-                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: skipped (manual_skip)")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: skipped (manual_skip)")
                 return "skipped"
         # New: Check if there is a next run within the summary end days window
         # Only applies if enabled and not running/skipped
@@ -888,21 +892,25 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             except Exception as e:
                 _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: Error parsing next_run time: {e}")
 
-        _LOGGER.debug(
-            f"[ProgramSensor] program_id={self.program_id}, enabled={enabled}, summary_end_days={summary_end_days}, "
-            f"next_run_start={next_run.get('start') if next_run else None}, next_run_time={next_run_time}, "
-            f"next_run_within_window={next_run_within_window}"
-        )
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        #_LOGGER.debug(
+        #    f"[ProgramSensor] program_id={self.program_id}, enabled={enabled}, summary_end_days={summary_end_days}, "
+        #    f"next_run_start={next_run.get('start') if next_run else None}, next_run_time={next_run_time}, "
+        #    f"next_run_within_window={next_run_within_window}"
+        #)
 
         if enabled:
             if not next_run or not next_run.get("start"):
-                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (no next_run)")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (no next_run)")
                 return "not on schedule"
             if not next_run_within_window:
-                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (next_run not within window)")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (next_run not within window)")
                 return "not on schedule"
 
-        _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: scheduled")
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: scheduled")
         return "scheduled"
 
     @property
@@ -1003,7 +1011,8 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             interval = current_program["dailyInterval"]
             if "intervalDays" in interval:
                 attributes["interval_days"] = interval["intervalDays"]
-            _LOGGER.debug(f"Program {self.program_id}: dailyInterval={interval}")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: dailyInterval={interval}")
 
         # Handle days of week scheduling (alternative to dailyInterval)
         if "daysOfWeek" in current_program:
@@ -1014,15 +1023,18 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                     # Convert day names to title case for better readability
                     formatted_days = [day.title() for day in days_list]
                     attributes["days_of_week"] = ", ".join(formatted_days)
-                    _LOGGER.debug(f"Program {self.program_id}: daysOfWeek={formatted_days}")
+                    # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                    #_LOGGER.debug(f"Program {self.program_id}: daysOfWeek={formatted_days}")
 
         # Handle even/odd days scheduling (alternative to dailyInterval)
         if "evenDays" in current_program:
             attributes["schedule_type"] = "Even Days"
-            _LOGGER.debug(f"Program {self.program_id}: Schedule type is Even Days")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: Schedule type is Even Days")
         elif "oddDays" in current_program:
             attributes["schedule_type"] = "Odd Days"
-            _LOGGER.debug(f"Program {self.program_id}: Schedule type is Odd Days")
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: Schedule type is Odd Days")
 
 
         if "plannedRuns" in current_program and current_program["plannedRuns"]:
@@ -1065,15 +1077,18 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 total_duration = sum(int(run.get("durationSec", 0)) for run in entity_runs)
                 attributes["total_duration_seconds"] = total_duration
                 attributes["total_duration_minutes"] = total_duration // 60
-                _LOGGER.debug(f"Program {self.program_id}: entityRuns count={len(entity_runs)}, total_duration={total_duration}s")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: entityRuns count={len(entity_runs)}, total_duration={total_duration}s")
 
             # Run concurrently and cycle & soak
             if "runConcurrently" in planned_run:
                 attributes["run_concurrently"] = planned_run["runConcurrently"]
-                _LOGGER.debug(f"Program {self.program_id}: runConcurrently={planned_run['runConcurrently']}")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: runConcurrently={planned_run['runConcurrently']}")
             if "cycleAndSoak" in planned_run:
                 attributes["cycle_and_soak"] = planned_run["cycleAndSoak"]
-                _LOGGER.debug(f"Program {self.program_id}: cycleAndSoak={planned_run['cycleAndSoak']}")
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: cycleAndSoak={planned_run['cycleAndSoak']}")
         else:
             _LOGGER.debug(f"Program {self.program_id}: No plannedRuns in current_program")
 
@@ -1123,12 +1138,12 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 if next_run.get("manual_skip"):
                     attributes["next_run_skipped"] = True
 
-        # Debug: Log final attributes to verify schedule_type is included
-        if "evenDays" in current_program or "oddDays" in current_program:
-            _LOGGER.debug(f"Program {self.program_id}: Final attributes keys: {list(attributes.keys())}")
-            if "schedule_type" in attributes:
-                _LOGGER.debug(f"Program {self.program_id}: schedule_type = {attributes['schedule_type']}")
-            else:
-                _LOGGER.warning(f"Program {self.program_id}: schedule_type NOT in final attributes!")
+        # # Debug: Log final attributes to verify schedule_type is included
+        # if "evenDays" in current_program or "oddDays" in current_program:
+        #     _LOGGER.debug(f"Program {self.program_id}: Final attributes keys: {list(attributes.keys())}")
+        #     if "schedule_type" in attributes:
+        #         _LOGGER.debug(f"Program {self.program_id}: schedule_type = {attributes['schedule_type']}")
+        #     else:
+        #         _LOGGER.warning(f"Program {self.program_id}: schedule_type NOT in final attributes!")
 
         return attributes
