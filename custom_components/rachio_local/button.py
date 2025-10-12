@@ -25,6 +25,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         handler = data["handler"]
         coordinator = data["coordinator"]
 
+        # Add normal polling refresh button for all device types
+        entities.append(RachioNormalRefreshButton(coordinator, handler))
+        _LOGGER.debug(f"Added normal refresh button for device {handler.name}")
+
         # Add full coordinator refresh button for all device types
         entities.append(RachioFullRefreshButton(coordinator, handler))
         _LOGGER.debug(f"Added full refresh button for device {handler.name}")
@@ -164,8 +168,31 @@ class RachioRefreshProgramButton(RachioBaseButtonEntity):
         _LOGGER.debug(f"Program {self.program_id} refresh complete (1 API call)")
 
 
+class RachioNormalRefreshButton(RachioBaseButtonEntity):
+    """Button to trigger a normal polling refresh (respects cache)."""
+
+    def __init__(self, coordinator, handler):
+        """Initialize the button."""
+        super().__init__(coordinator, handler)
+
+        self._attr_name = "Refresh: Normal Polling"
+        self._attr_unique_id = f"{handler.device_id}_normal_refresh"
+        self._attr_icon = "mdi:refresh"
+        # No entity_category = shows in Controls section
+        self._attr_entity_registry_enabled_default = False  # Hidden by default
+
+    async def async_press(self) -> None:
+        """Handle the button press - trigger normal coordinator refresh."""
+        _LOGGER.info(f"Normal coordinator refresh requested for device {self.handler.name}")
+
+        # Trigger normal coordinator refresh (respects program details cache)
+        await self.coordinator.async_refresh()
+
+        _LOGGER.info(f"Normal coordinator refresh complete for device {self.handler.name}")
+
+
 class RachioFullRefreshButton(RachioBaseButtonEntity):
-    """Button to trigger a full coordinator refresh."""
+    """Button to trigger a full coordinator refresh including all program details."""
 
     def __init__(self, coordinator, handler):
         """Initialize the button."""
@@ -181,7 +208,12 @@ class RachioFullRefreshButton(RachioBaseButtonEntity):
         """Handle the button press - trigger full coordinator refresh."""
         _LOGGER.info(f"Full coordinator refresh requested for device {self.handler.name}")
 
-        # Trigger full coordinator refresh (base station + valves + summary + program details)
-        await self.coordinator.async_request_refresh()
+        # Check if handler has force_program_details_refresh method (Smart Hose Timer)
+        # This marks all program details cache as stale before the refresh
+        if hasattr(self.handler, 'force_program_details_refresh'):
+            self.handler.force_program_details_refresh()
+
+        # Now trigger coordinator refresh which will fetch fresh program details
+        await self.coordinator.async_refresh()
 
         _LOGGER.info(f"Full coordinator refresh complete for device {self.handler.name}")

@@ -179,6 +179,20 @@ class RachioSmartHoseTimerHandler:
         except Exception as e:
             _LOGGER.warning(f"Error removing entities for deleted programs: {e}")
 
+    def force_program_details_refresh(self) -> None:
+        """Mark all program details cache as stale to force refresh on next update.
+
+        This method doesn't actually fetch data - it just marks the cache as stale.
+        Call this before triggering a coordinator refresh to ensure fresh program details.
+        """
+        _LOGGER.info(f"Marking all program details cache as stale for {self.name}")
+
+        # Clear all program detail caches to force fresh fetch on next update
+        for program_id in list(self._program_details.keys()):
+            self._program_details[program_id]["last_fetched"] = 0  # Force stale
+
+        _LOGGER.debug(f"Marked {len(self._program_details)} program caches as stale")
+
     async def async_update(self) -> None:
         try:
             # Commented out to reduce log noise (called on every update)
