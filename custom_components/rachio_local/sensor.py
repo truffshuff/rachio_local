@@ -826,23 +826,83 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
 
         if not current_program:
             return "unavailable"
-
+            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: unavailable (no current_program)")
+            return "unavailable"
         # Check if program is enabled (from getProgramV2 API)
         enabled = current_program.get("enabled", True)
         if not enabled:
             return "disabled"
-
+            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: disabled")
+            return "disabled"
         # Check if program is currently active (running)
         active = current_program.get("active", False)
         if active:
             return "running"
-
+            _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: running")
+            return "running"
         # Check if next run has been manually skipped
         if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
             summaries = self.handler.program_run_summaries[self.program_id]
             if summaries.get("next_run") and summaries["next_run"].get("manual_skip"):
                 return "skipped"
+                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: skipped (manual_skip)")
+                return "skipped"
+        # New: Check if there is a next run within the summary end days window
+        # Only applies if enabled and not running/skipped
+        # Use the same logic as the handler uses for summary_end_days
+        summary_end_days = None
+        if hasattr(self.handler, 'get_summary_end_days'):
+            summary_end_days = self.handler.get_summary_end_days()
+        elif hasattr(self.handler, 'summary_end_days'):
+            summary_end_days = self.handler.summary_end_days
+        if summary_end_days is None:
+            summary_end_days = 7  # fallback default
 
+
+        # Improved logic: Only set 'not on schedule' if there is NO next_run at all, or next_run is outside window
+        next_run = None
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+            next_run = summaries.get("next_run")
+
+        next_run_within_window = False
+        next_run_time = None
+        if next_run and next_run.get("start"):
+            try:
+                from datetime import datetime, timezone, timedelta
+                start_val = next_run["start"]
+                if isinstance(start_val, datetime):
+                    next_run_time = start_val
+                elif isinstance(start_val, str):
+                    # Handle both Z and +00:00 endings
+                    if start_val.endswith("Z"):
+                        next_run_time = datetime.fromisoformat(start_val.replace("Z", "+00:00"))
+                    else:
+                        next_run_time = datetime.fromisoformat(start_val)
+                else:
+                    raise ValueError(f"Unexpected type for next_run['start']: {type(start_val)}")
+                now = datetime.now(timezone.utc)
+                window_end = now + timedelta(days=summary_end_days)
+                if now <= next_run_time <= window_end:
+                    next_run_within_window = True
+            except Exception as e:
+                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: Error parsing next_run time: {e}")
+
+        _LOGGER.debug(
+            f"[ProgramSensor] program_id={self.program_id}, enabled={enabled}, summary_end_days={summary_end_days}, "
+            f"next_run_start={next_run.get('start') if next_run else None}, next_run_time={next_run_time}, "
+            f"next_run_within_window={next_run_within_window}"
+        )
+
+        if enabled:
+            if not next_run or not next_run.get("start"):
+                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (no next_run)")
+                return "not on schedule"
+            if not next_run_within_window:
+                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (next_run not within window)")
+                return "not on schedule"
+
+        _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: scheduled")
         return "scheduled"
 
     @property
@@ -964,10 +1024,10 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["schedule_type"] = "Odd Days"
             _LOGGER.debug(f"Program {self.program_id}: Schedule type is Odd Days")
 
+
         if "plannedRuns" in current_program and current_program["plannedRuns"]:
             _LOGGER.debug(f"Program {self.program_id}: plannedRuns present with {len(current_program['plannedRuns'])} run(s)")
             planned_run = current_program["plannedRuns"][0]  # Get first planned run
-
             # Check for sun event start time
             if "sunStart" in planned_run:
                 sun_start = planned_run["sunStart"]
