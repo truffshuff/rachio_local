@@ -157,6 +157,17 @@ class RachioProgramDetailsRefreshIntervalNumber(CoordinatorEntity, NumberEntity)
 
         self.handler._program_details_refresh_interval = int_value
 
+        # Invalidate all program cache timestamps to force refresh on next coordinator update
+        # This ensures the new interval takes effect immediately
+        if hasattr(self.handler, '_program_details'):
+            for program_id in self.handler._program_details:
+                self.handler._program_details[program_id]["last_fetched"] = 0
+            _LOGGER.debug(
+                "%s: Invalidated %d program cache entries to apply new refresh interval",
+                self.handler.name,
+                len(self.handler._program_details)
+            )
+
         # Persist to config entry options
         config_key = f"{CONF_PROGRAM_DETAILS_REFRESH_INTERVAL}_{self.handler.device_id}"
         new_options = {**self.entry.options, config_key: int_value}
@@ -169,6 +180,9 @@ class RachioProgramDetailsRefreshIntervalNumber(CoordinatorEntity, NumberEntity)
             value,
             int_value,
         )
+
+        # Trigger coordinator refresh to apply the new interval immediately
+        await self.coordinator.async_request_refresh()
 
 
 class RachioActivePollingIntervalNumber(RachioPollingIntervalNumber):
