@@ -63,7 +63,7 @@ disable_program:
 
 update_program:
   name: Update Program
-  description: Update a Smart Hose Timer program's settings
+  description: "Update a Smart Hose Timer program's settings. Only include the fields you want to change. Note: Only ONE scheduling type can be used (days_of_week OR interval_days OR even_days OR odd_days)."
   fields:
     program_id:
       name: Program
@@ -101,3 +101,57 @@ update_program:
       example: "#00A7E1"
       selector:
         color_rgb:
+    runs:
+      name: Program Runs
+      description: "Configure one or more runs per day with start times and valves. Provide as YAML/JSON array. Each run can have 'start_time' OR 'sun_event'+'sun_offset_minutes', plus optional 'valves' array."
+      required: false
+      example: '[{"start_time": "06:00", "valves": [{"entity_id": "switch.valve_1", "duration": 300}]}, {"sun_event": "AFTER_SET", "sun_offset_minutes": 30, "valves": [{"entity_id": "switch.valve_2", "duration": 200}]}]'
+      selector:
+        object:
+    days_of_week:
+      name: Days of Week
+      description: "Select days when program should run (for weekly schedules). Cannot be used with interval_days, even_days, or odd_days."
+      required: false
+      example: ["monday", "wednesday", "friday"]
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Monday
+              value: "monday"
+            - label: Tuesday
+              value: "tuesday"
+            - label: Wednesday
+              value: "wednesday"
+            - label: Thursday
+              value: "thursday"
+            - label: Friday
+              value: "friday"
+            - label: Saturday
+              value: "saturday"
+            - label: Sunday
+              value: "sunday"
+    interval_days:
+      name: Interval Days
+      description: "Number of days between runs (for interval-based schedules). Cannot be used with days_of_week, even_days, or odd_days."
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: days
+          mode: box
+    even_days:
+      name: Even Days
+      description: "Run on even calendar days (e.g., 2nd, 4th, 6th). Cannot be used with days_of_week, interval_days, or odd_days."
+      required: false
+      selector:
+        boolean:
+    odd_days:
+      name: Odd Days
+      description: "Run on odd calendar days (e.g., 1st, 3rd, 5th). Cannot be used with days_of_week, interval_days, or even_days."
+      required: false
+      selector:
+        boolean:

@@ -41,30 +41,50 @@
             }
         },
         "update_program": {
-            "name": "Update program",
-            "description": "Update a Smart Hose Timer program's settings.",
-            "fields": {
-                "program_id": {
-                    "name": "Program",
-                    "description": "The program to update (select a Program sensor entity)."
-                },
-                "enabled": {
-                    "name": "Enabled",
-                    "description": "Enable or disable the program."
-                },
-                "name": {
-                    "name": "Name",
-                    "description": "Program name."
-                },
-                "rain_skip_enabled": {
-                    "name": "Rain skip enabled",
-                    "description": "Enable or disable rain skip for this program."
-                },
-                "color": {
-                    "name": "Color",
-                    "description": "Program color in hex format (e.g., #00A7E1)."
-                }
-            }
+        "name": "Update program",
+        "description": "Update a Smart Hose Timer program",
+        "fields": {
+          "program": {
+            "name": "Program",
+            "description": "The program entity to update"
+          },
+          "enabled": {
+            "name": "Enabled",
+            "description": "Enable or disable the program"
+          },
+          "name": {
+            "name": "Name",
+            "description": "The name of the program"
+          },
+          "color": {
+            "name": "Color",
+            "description": "The color of the program (RGB)"
+          },
+          "rain_skip": {
+            "name": "Rain Skip",
+            "description": "Enable rain skip feature"
+          },
+          "days_of_week": {
+            "name": "Days of Week",
+            "description": "List of day numbers (0=Sunday, 6=Saturday). Only one scheduling type can be used: days_of_week, interval_days, even_days, or odd_days."
+          },
+          "interval_days": {
+            "name": "Interval Days",
+            "description": "Number of days between runs (1-365). Only one scheduling type can be used: days_of_week, interval_days, even_days, or odd_days."
+          },
+          "even_days": {
+            "name": "Even Days",
+            "description": "Run on even-numbered days of the month. Only one scheduling type can be used: days_of_week, interval_days, even_days, or odd_days."
+          },
+          "odd_days": {
+            "name": "Odd Days",
+            "description": "Run on odd-numbered days of the month. Only one scheduling type can be used: days_of_week, interval_days, even_days, or odd_days."
+          },
+          "runs": {
+            "name": "Runs",
+            "description": "List of daily run configurations. Each run specifies when to water (start_time OR sun_event) and which valves to use. Example: [{\"start_time\": \"06:00:00\", \"valves\": [{\"entity_id\": \"switch.front_yard_valve\", \"duration\": 600}]}, {\"sun_event\": \"AFTER_SET\", \"sun_offset_minutes\": 30, \"valves\": [{\"entity_id\": \"switch.back_yard_valve\", \"duration\": 300}]}]"
+          }
         }
+      }
     }
 }

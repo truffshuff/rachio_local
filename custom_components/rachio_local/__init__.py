@@ -182,19 +182,160 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Handle update_program service call."""
             # Build update payload from service data
             update_data = {}
+            
+            # Validate mutually exclusive scheduling options
+            scheduling_types = []
+            if "days_of_week" in call.data:
+                scheduling_types.append("days_of_week")
+            if "interval_days" in call.data:
+                scheduling_types.append("interval_days")
+            if "even_days" in call.data and call.data["even_days"]:
+                scheduling_types.append("even_days")
+            if "odd_days" in call.data and call.data["odd_days"]:
+                scheduling_types.append("odd_days")
+            
+            # Check if more than one scheduling type is specified
+            if len(scheduling_types) > 1:
+                _LOGGER.error(
+                    f"Invalid program update: Multiple scheduling types specified ({', '.join(scheduling_types)}). "
+                    f"Only one of the following can be used: days_of_week, interval_days, even_days, or odd_days."
+                )
+                return
+            
+            # Simple boolean/string fields
             if "enabled" in call.data:
                 update_data["enabled"] = call.data["enabled"]
             if "name" in call.data:
                 update_data["name"] = call.data["name"]
             if "rain_skip_enabled" in call.data:
                 update_data["rainSkipEnabled"] = call.data["rain_skip_enabled"]
+            
+            # Color field - convert RGB list to hex if needed
             if "color" in call.data:
-                # Convert RGB list to hex color if needed
                 color = call.data["color"]
                 if isinstance(color, (list, tuple)) and len(color) == 3:
                     update_data["color"] = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
                 else:
                     update_data["color"] = color
+            
+            # Days of week - convert to daysOfWeek object with uppercase day names
+            if "days_of_week" in call.data:
+                days = call.data["days_of_week"]
+                if isinstance(days, list):
+                    # Convert day names to uppercase (e.g., "monday" -> "MONDAY")
+                    uppercase_days = [day.upper() if isinstance(day, str) else day for day in days]
+                    update_data["daysOfWeek"] = {
+                        "daysOfWeek": uppercase_days
+                    }
+            
+            # Interval days - convert to dailyInterval object with intervalDays field
+            if "interval_days" in call.data:
+                interval = call.data["interval_days"]
+                if isinstance(interval, (int, float)) and interval > 0:
+                    update_data["dailyInterval"] = {
+                        "intervalDays": int(interval)
+                    }
+            
+            # Even/odd days
+            if "even_days" in call.data:
+                update_data["evenDays"] = call.data["even_days"]
+            if "odd_days" in call.data:
+                update_data["oddDays"] = call.data["odd_days"]
+            
+            # Handle runs configuration (supports multiple runs per day)
+            if "runs" in call.data:
+                runs_config = call.data["runs"]
+                if isinstance(runs_config, (list, dict)):
+                    # Handle both list format and dict format
+                    runs_list = runs_config if isinstance(runs_config, list) else [runs_config]
+                    
+                    # Get entity registry to resolve entity IDs to valve IDs
+                    from homeassistant.helpers import entity_registry as er
+                    registry = er.async_get(hass)
+                    
+                    processed_runs = []
+                    for run_idx, run_entry in enumerate(runs_list):
+                        if not isinstance(run_entry, dict):
+                            continue
+                        
+                        run_data = {}
+                        
+                        # Validate mutually exclusive start types within this run
+                        has_fixed_start = "start_time" in run_entry
+                        has_sun_start = "sun_event" in run_entry
+                        
+                        if has_fixed_start and has_sun_start:
+                            _LOGGER.error(
+                                f"Invalid run {run_idx + 1}: Both start_time and sun_event specified. "
+                                f"Only one can be used per run."
+                            )
+                            continue
+                        
+                        # Fixed start time
+                        if has_fixed_start:
+                            time_str = run_entry["start_time"]
+                            if isinstance(time_str, str) and ":" in time_str:
+                                parts = time_str.split(":")
+                                hour = int(parts[0])
+                                minute = int(parts[1]) if len(parts) > 1 else 0
+                                run_data["fixedStart"] = {
+                                    "startAt": {
+                                        "hour": hour,
+                                        "minute": minute,
+                                        "second": 0
+                                    }
+                                }
+                        
+                        # Sun-based start time
+                        elif has_sun_start:
+                            sun_event = run_entry["sun_event"]
+                            offset_minutes = run_entry.get("sun_offset_minutes", 0)
+                            offset_seconds = int(offset_minutes * 60)
+                            run_data["sunStart"] = {
+                                "sunEvent": sun_event,
+                                "offsetSeconds": str(offset_seconds)
+                            }
+                        
+                        # Process valves for this run
+                        if "valves" in run_entry:
+                            valves_config = run_entry["valves"]
+                            if isinstance(valves_config, (list, dict)):
+                                valve_list = valves_config if isinstance(valves_config, list) else [valves_config]
+                                
+                                entity_runs = []
+                                for valve_entry in valve_list:
+                                    if not isinstance(valve_entry, dict):
+                                        continue
+                                    
+                                    entity_id = valve_entry.get("entity_id")
+                                    duration = valve_entry.get("duration", 300)
+                                    
+                                    if not entity_id:
+                                        continue
+                                    
+                                    entity_entry = registry.async_get(entity_id)
+                                    if entity_entry and "_valve_" in entity_entry.unique_id:
+                                        valve_id = entity_entry.unique_id.split("_valve_")[-1]
+                                        entity_runs.append({
+                                            "entityId": valve_id,
+                                            "durationSec": str(duration)
+                                        })
+                                    else:
+                                        _LOGGER.warning(f"Entity {entity_id} is not a valve entity")
+                                
+                                if entity_runs:
+                                    run_data["entityRuns"] = entity_runs
+                        
+                        # Only add run if it has configuration
+                        if run_data:
+                            processed_runs.append(run_data)
+                            _LOGGER.debug(f"Added run {run_idx + 1}: {list(run_data.keys())}")
+                    
+                    if processed_runs:
+                        update_data["plannedRuns"] = {
+                            "runs": processed_runs
+                        }
+                        _LOGGER.info(f"Configured {len(processed_runs)} run(s) for program")
             
             await _handle_program_update(call, update_data)
         
@@ -260,9 +401,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         if resp.status == 200:
                             result = await resp.json()
                             _LOGGER.info(f"Successfully updated program {program_id}: {update_data}")
+                            _LOGGER.debug(f"API response: {result}")
                             
                             # Force refresh of only this program's details to reflect changes
                             details = await handler._fetch_program_details(session, program_id, force_refresh=True)
+                            _LOGGER.debug(f"Fetched program details after update: {details}")
                             
                             # Update the program in handler.schedules with fresh data from API
                             if details and "program" in details:

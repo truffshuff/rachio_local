@@ -251,7 +251,7 @@ class RachioSmartHoseTimerHandler:
                     config_key = f"{CONF_SUMMARY_END_DAYS}_{self.device_id}"
                     config_options_debug = dict(self.config_entry.options)
                     summary_end_days = self.config_entry.options.get(config_key, 7)
-                _LOGGER.debug(f"[DEBUG] Config entry options for {self.device_id}: {config_options_debug}, using summary_end_days={summary_end_days}")
+                #_LOGGER.debug(f"[DEBUG] Config entry options for {self.device_id}: {config_options_debug}, using summary_end_days={summary_end_days}")
                 end_date = today + timedelta(days=summary_end_days)
 
                 payload = {
