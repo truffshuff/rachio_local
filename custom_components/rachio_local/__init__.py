@@ -170,175 +170,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         
         # Register Smart Hose Timer program management services
-        async def handle_enable_program(call):
-            """Handle enable_program service call."""
-            await _handle_program_update(call, {"enabled": True})
-        
-        async def handle_disable_program(call):
-            """Handle disable_program service call."""
-            await _handle_program_update(call, {"enabled": False})
-        
-        async def handle_update_program(call):
-            """Handle update_program service call."""
-            # Build update payload from service data
-            update_data = {}
-            
-            # Validate mutually exclusive scheduling options
-            scheduling_types = []
-            if "days_of_week" in call.data:
-                scheduling_types.append("days_of_week")
-            if "interval_days" in call.data:
-                scheduling_types.append("interval_days")
-            if "even_days" in call.data and call.data["even_days"]:
-                scheduling_types.append("even_days")
-            if "odd_days" in call.data and call.data["odd_days"]:
-                scheduling_types.append("odd_days")
-            
-            # Check if more than one scheduling type is specified
-            if len(scheduling_types) > 1:
-                _LOGGER.error(
-                    f"Invalid program update: Multiple scheduling types specified ({', '.join(scheduling_types)}). "
-                    f"Only one of the following can be used: days_of_week, interval_days, even_days, or odd_days."
-                )
-                return
-            
-            # Simple boolean/string fields
-            if "enabled" in call.data:
-                update_data["enabled"] = call.data["enabled"]
-            if "name" in call.data:
-                update_data["name"] = call.data["name"]
-            if "rain_skip_enabled" in call.data:
-                update_data["rainSkipEnabled"] = call.data["rain_skip_enabled"]
-            
-            # Color field - convert RGB list to hex if needed
-            if "color" in call.data:
-                color = call.data["color"]
-                if isinstance(color, (list, tuple)) and len(color) == 3:
-                    update_data["color"] = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
-                else:
-                    update_data["color"] = color
-            
-            # Days of week - convert to daysOfWeek object with uppercase day names
-            if "days_of_week" in call.data:
-                days = call.data["days_of_week"]
-                if isinstance(days, list):
-                    # Convert day names to uppercase (e.g., "monday" -> "MONDAY")
-                    uppercase_days = [day.upper() if isinstance(day, str) else day for day in days]
-                    update_data["daysOfWeek"] = {
-                        "daysOfWeek": uppercase_days
-                    }
-            
-            # Interval days - convert to dailyInterval object with intervalDays field
-            if "interval_days" in call.data:
-                interval = call.data["interval_days"]
-                if isinstance(interval, (int, float)) and interval > 0:
-                    update_data["dailyInterval"] = {
-                        "intervalDays": int(interval)
-                    }
-            
-            # Even/odd days
-            if "even_days" in call.data:
-                update_data["evenDays"] = call.data["even_days"]
-            if "odd_days" in call.data:
-                update_data["oddDays"] = call.data["odd_days"]
-            
-            # Handle runs configuration (supports multiple runs per day)
-            if "runs" in call.data:
-                runs_config = call.data["runs"]
-                if isinstance(runs_config, (list, dict)):
-                    # Handle both list format and dict format
-                    runs_list = runs_config if isinstance(runs_config, list) else [runs_config]
-                    
-                    # Get entity registry to resolve entity IDs to valve IDs
-                    from homeassistant.helpers import entity_registry as er
-                    registry = er.async_get(hass)
-                    
-                    processed_runs = []
-                    for run_idx, run_entry in enumerate(runs_list):
-                        if not isinstance(run_entry, dict):
-                            continue
-                        
-                        run_data = {}
-                        
-                        # Validate mutually exclusive start types within this run
-                        has_fixed_start = "start_time" in run_entry
-                        has_sun_start = "sun_event" in run_entry
-                        
-                        if has_fixed_start and has_sun_start:
-                            _LOGGER.error(
-                                f"Invalid run {run_idx + 1}: Both start_time and sun_event specified. "
-                                f"Only one can be used per run."
-                            )
-                            continue
-                        
-                        # Fixed start time
-                        if has_fixed_start:
-                            time_str = run_entry["start_time"]
-                            if isinstance(time_str, str) and ":" in time_str:
-                                parts = time_str.split(":")
-                                hour = int(parts[0])
-                                minute = int(parts[1]) if len(parts) > 1 else 0
-                                run_data["fixedStart"] = {
-                                    "startAt": {
-                                        "hour": hour,
-                                        "minute": minute,
-                                        "second": 0
-                                    }
-                                }
-                        
-                        # Sun-based start time
-                        elif has_sun_start:
-                            sun_event = run_entry["sun_event"]
-                            offset_minutes = run_entry.get("sun_offset_minutes", 0)
-                            offset_seconds = int(offset_minutes * 60)
-                            run_data["sunStart"] = {
-                                "sunEvent": sun_event,
-                                "offsetSeconds": str(offset_seconds)
-                            }
-                        
-                        # Process valves for this run
-                        if "valves" in run_entry:
-                            valves_config = run_entry["valves"]
-                            if isinstance(valves_config, (list, dict)):
-                                valve_list = valves_config if isinstance(valves_config, list) else [valves_config]
-                                
-                                entity_runs = []
-                                for valve_entry in valve_list:
-                                    if not isinstance(valve_entry, dict):
-                                        continue
-                                    
-                                    entity_id = valve_entry.get("entity_id")
-                                    duration = valve_entry.get("duration", 300)
-                                    
-                                    if not entity_id:
-                                        continue
-                                    
-                                    entity_entry = registry.async_get(entity_id)
-                                    if entity_entry and "_valve_" in entity_entry.unique_id:
-                                        valve_id = entity_entry.unique_id.split("_valve_")[-1]
-                                        entity_runs.append({
-                                            "entityId": valve_id,
-                                            "durationSec": str(duration)
-                                        })
-                                    else:
-                                        _LOGGER.warning(f"Entity {entity_id} is not a valve entity")
-                                
-                                if entity_runs:
-                                    run_data["entityRuns"] = entity_runs
-                        
-                        # Only add run if it has configuration
-                        if run_data:
-                            processed_runs.append(run_data)
-                            _LOGGER.debug(f"Added run {run_idx + 1}: {list(run_data.keys())}")
-                    
-                    if processed_runs:
-                        update_data["plannedRuns"] = {
-                            "runs": processed_runs
-                        }
-                        _LOGGER.info(f"Configured {len(processed_runs)} run(s) for program")
-            
-            await _handle_program_update(call, update_data)
-        
         async def _handle_program_update(call, update_data: dict):
             """Common handler for program update operations."""
             program_entity_id = call.data.get("program_id")
@@ -352,8 +183,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entity_entry = registry.async_get(program_entity_id)
             
             if not entity_entry:
-                _LOGGER.error(f"Entity {program_entity_id} not found in registry")
-                return
+                # Try to find the entity by searching all entries
+                _LOGGER.debug(f"Entity {program_entity_id} not found with async_get, searching registry...")
+                for entry_item in registry.entities.values():
+                    if entry_item.entity_id == program_entity_id:
+                        entity_entry = entry_item
+                        _LOGGER.debug(f"Found entity {program_entity_id} via search")
+                        break
+                
+                if not entity_entry:
+                    _LOGGER.error(f"Entity {program_entity_id} not found in registry. Available program sensors: {[e.entity_id for e in registry.entities.values() if e.domain == 'sensor' and e.platform == DOMAIN and '_program_' in e.unique_id]}")
+                    return
             
             # Extract program_id from unique_id (format: {device_id}_program_{program_id})
             if "_program_" not in entity_entry.unique_id:
@@ -449,6 +289,432 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             _LOGGER.error(f"Failed to update program {program_id}: {resp.status} - {error_text}")
             except Exception as err:
                 _LOGGER.error(f"Error updating program {program_id}: {err}")
+        
+        async def handle_enable_program(call):
+            """Handle enable_program service call."""
+            await _handle_program_update(call, {"enabled": True})
+        
+        async def handle_disable_program(call):
+            """Handle disable_program service call."""
+            await _handle_program_update(call, {"enabled": False})
+        
+        async def handle_update_program(call):
+            """Handle update_program service call."""
+            # Build update payload from service data
+            update_data = {}
+            
+            # Validate mutually exclusive scheduling options
+            scheduling_types = []
+            if "days_of_week" in call.data:
+                scheduling_types.append("days_of_week")
+            if "interval_days" in call.data:
+                scheduling_types.append("interval_days")
+            if "even_days" in call.data and call.data["even_days"]:
+                scheduling_types.append("even_days")
+            if "odd_days" in call.data and call.data["odd_days"]:
+                scheduling_types.append("odd_days")
+            
+            # Check if more than one scheduling type is specified
+            if len(scheduling_types) > 1:
+                _LOGGER.error(
+                    f"Invalid program update: Multiple scheduling types specified ({', '.join(scheduling_types)}). "
+                    f"Only one of the following can be used: days_of_week, interval_days, even_days, or odd_days."
+                )
+                return
+            
+            # Simple boolean/string fields
+            if "enabled" in call.data:
+                update_data["enabled"] = call.data["enabled"]
+            if "name" in call.data:
+                update_data["name"] = call.data["name"]
+            if "rain_skip_enabled" in call.data:
+                update_data["rainSkipEnabled"] = call.data["rain_skip_enabled"]
+            
+            # Color field - convert RGB list to hex if needed
+            if "color" in call.data:
+                color = call.data["color"]
+                if isinstance(color, (list, tuple)) and len(color) == 3:
+                    update_data["color"] = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+                else:
+                    update_data["color"] = color
+            
+            # Days of week - convert to daysOfWeek object with uppercase day names
+            if "days_of_week" in call.data:
+                days = call.data["days_of_week"]
+                if isinstance(days, list):
+                    # Convert day names to uppercase (e.g., "monday" -> "MONDAY")
+                    uppercase_days = [day.upper() if isinstance(day, str) else day for day in days]
+                    update_data["daysOfWeek"] = {
+                        "daysOfWeek": uppercase_days
+                    }
+            
+            # Interval days - convert to dailyInterval object with intervalDays field
+            if "interval_days" in call.data:
+                interval = call.data["interval_days"]
+                if isinstance(interval, (int, float)) and interval > 0:
+                    update_data["dailyInterval"] = {
+                        "intervalDays": int(interval)
+                    }
+            
+            # Even/odd days
+            if "even_days" in call.data:
+                update_data["evenDays"] = call.data["even_days"]
+            if "odd_days" in call.data:
+                update_data["oddDays"] = call.data["odd_days"]
+            
+            # Check if user provided easy UI fields (run_1, run_2, run_3) or advanced runs field
+            has_easy_runs = (
+                any(key.startswith(("run_1_", "run_2_", "run_3_")) for key in call.data.keys())
+                or "valves" in call.data
+            )
+            has_advanced_runs = "runs" in call.data
+            
+            if has_easy_runs and has_advanced_runs:
+                _LOGGER.error(
+                    "Invalid program update: Cannot use both the easy run fields (run_1_*, run_2_*, run_3_*) "
+                    "and the advanced 'runs' field. Please use one or the other."
+                )
+                return
+            
+            # Process easy UI run fields (run_1, run_2, run_3)
+            if has_easy_runs:
+                from homeassistant.helpers import entity_registry as er
+                registry = er.async_get(hass)
+                
+                def time_to_seconds(time_str):
+                    """Convert HH:MM:SS or HH:MM time string to seconds."""
+                    if isinstance(time_str, (int, float)):
+                        return int(time_str)  # Already in seconds
+                    if not isinstance(time_str, str):
+                        return 300  # Default 5 minutes
+                    
+                    parts = time_str.split(":")
+                    if len(parts) == 3:
+                        hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+                        return hours * 3600 + minutes * 60 + seconds
+                    elif len(parts) == 2:
+                        hours, minutes = int(parts[0]), int(parts[1])
+                        return hours * 3600 + minutes * 60
+                    else:
+                        return 300  # Default 5 minutes
+                
+                # Get global valve configuration
+                global_valves = call.data.get("valves", [])
+                if isinstance(global_valves, str):
+                    global_valves = [global_valves]
+                
+                # Get valve durations - check for positional durations (valve_duration_1, valve_duration_2, etc.)
+                total_duration_raw = call.data.get("total_duration", "00:05:00")
+                total_duration = time_to_seconds(total_duration_raw)
+                
+                positional_durations = []
+                for i in range(1, 5):  # Support up to 4 valves with individual durations
+                    duration_key = f"valve_duration_{i}"
+                    if duration_key in call.data:
+                        duration_seconds = time_to_seconds(call.data[duration_key])
+                        positional_durations.append(duration_seconds)
+                
+                # Build entity runs list from global valves
+                global_entity_runs = []
+                if global_valves:
+                    for valve_idx, entity_id in enumerate(global_valves):
+                        entity_entry = registry.async_get(entity_id)
+                        if entity_entry:
+                            valve_id = None
+                            # Check for Smart Hose Timer zones (format: {device_id}_{zone_id}_zone)
+                            if "_zone" in entity_entry.unique_id:
+                                parts = entity_entry.unique_id.split("_zone")
+                                if len(parts) == 2 and parts[0]:
+                                    device_and_zone = parts[0]
+                                    zone_id = device_and_zone.split("_", 1)[1] if "_" in device_and_zone else device_and_zone
+                                    valve_id = zone_id
+                            # Check for controller valves (format: {device_id}_valve_{valve_id})
+                            elif "_valve_" in entity_entry.unique_id:
+                                valve_id = entity_entry.unique_id.split("_valve_")[-1]
+                            
+                            if valve_id:
+                                # Determine duration for this valve
+                                if valve_idx < len(positional_durations):
+                                    # Use positional duration (valve_duration_1, valve_duration_2, etc.)
+                                    duration = positional_durations[valve_idx]
+                                    _LOGGER.debug(f"Valve {valve_idx + 1} ({entity_id}) using valve_duration_{valve_idx + 1}: {duration}s")
+                                else:
+                                    # Split total duration equally across all valves
+                                    duration = int(total_duration / len(global_valves))
+                                    _LOGGER.debug(f"Valve {valve_idx + 1} ({entity_id}) using split duration: {duration}s (total: {total_duration}s / {len(global_valves)} valves)")
+                                
+                                global_entity_runs.append({
+                                    "entityId": valve_id,
+                                    "durationSec": str(duration)
+                                })
+                                _LOGGER.debug(f"Added valve {valve_idx + 1}: {entity_id} (id={valve_id}) with duration {duration}s")
+                            else:
+                                _LOGGER.warning(f"Entity {entity_id} is not a valve/zone entity (unique_id: {entity_entry.unique_id})")
+                        else:
+                            _LOGGER.warning(f"Entity {entity_id} not found in registry")
+                
+                # Now process each run's timing configuration
+                processed_runs = []
+                has_any_run_timing = False
+                
+                for run_num in [1, 2, 3]:
+                    prefix = f"run_{run_num}_"
+                    
+                    # Check if this run has timing configuration
+                    start_time = call.data.get(f"{prefix}start_time")
+                    sun_event = call.data.get(f"{prefix}sun_event")
+                    sun_offset = call.data.get(f"{prefix}sun_offset", 0)
+                    run_concurrently = call.data.get(f"{prefix}run_concurrently", False)
+                    cycle_and_soak = call.data.get(f"{prefix}cycle_and_soak", False)
+                    
+                    # Track if any run timing was specified
+                    if start_time or sun_event:
+                        has_any_run_timing = True
+                    
+                    # Skip if no timing specified
+                    if not start_time and not sun_event:
+                        _LOGGER.debug(f"Run {run_num}: Skipping - no start time or sun event specified")
+                        continue
+                    
+                    # Validate mutually exclusive start types
+                    if start_time and sun_event:
+                        _LOGGER.error(
+                            f"Invalid run {run_num}: Both start_time and sun_event specified. "
+                            f"Only one can be used per run."
+                        )
+                        continue
+                    
+                    run_data = {}
+                    
+                    # Handle fixed start time
+                    if start_time:
+                        if isinstance(start_time, str) and ":" in start_time:
+                            parts = start_time.split(":")
+                            hour = int(parts[0])
+                            minute = int(parts[1]) if len(parts) > 1 else 0
+                            run_data["fixedStart"] = {
+                                "startAt": {
+                                    "hour": hour,
+                                    "minute": minute,
+                                    "second": 0
+                                }
+                            }
+                            _LOGGER.debug(f"Run {run_num}: Fixed start time {hour:02d}:{minute:02d}")
+                    
+                    # Handle sun-based start time
+                    elif sun_event:
+                        offset_seconds = int(sun_offset * 60) if sun_offset else 0
+                        run_data["sunStart"] = {
+                            "sunEvent": sun_event,
+                            "offsetSeconds": str(offset_seconds)
+                        }
+                        _LOGGER.debug(f"Run {run_num}: Sun event {sun_event} with offset {sun_offset} minutes")
+                    
+                    # Apply global entity runs to this run
+                    if global_entity_runs:
+                        run_data["entityRuns"] = global_entity_runs
+                        _LOGGER.debug(f"Run {run_num}: Applied {len(global_entity_runs)} global valve(s)")
+                    
+                    # Add run concurrently and cycle and soak settings
+                    run_data["runConcurrently"] = run_concurrently
+                    run_data["cycleAndSoak"] = cycle_and_soak
+                    
+                    if run_concurrently:
+                        _LOGGER.debug(f"Run {run_num}: Will run valves concurrently")
+                    if cycle_and_soak:
+                        _LOGGER.debug(f"Run {run_num}: Cycle and soak enabled")
+                    
+                    # Only add run if it has configuration
+                    if run_data:
+                        processed_runs.append(run_data)
+                        _LOGGER.info(f"Run {run_num}: Configured with {len(run_data.get('entityRuns', []))} valve(s)")
+                
+                # Only update plannedRuns if the user specified run timing
+                # If they only specified valves without run timing, fetch existing runs and update valves
+                if processed_runs:
+                    update_data["plannedRuns"] = {
+                        "runs": processed_runs
+                    }
+                    _LOGGER.info(f"Configured {len(processed_runs)} run(s) with {len(global_entity_runs)} valve(s) each")
+                elif global_entity_runs and not has_any_run_timing:
+                    # User specified valves but no run timing - need to fetch existing program and update valves
+                    _LOGGER.info(f"Valves specified without run timing - fetching existing program to preserve run schedule")
+                    
+                    # Collect any run-specific settings that were provided
+                    run_settings = {}
+                    for run_num in [1, 2, 3]:
+                        prefix = f"run_{run_num}_"
+                        settings = {}
+                        if f"{prefix}run_concurrently" in call.data:
+                            settings["runConcurrently"] = call.data[f"{prefix}run_concurrently"]
+                        if f"{prefix}cycle_and_soak" in call.data:
+                            settings["cycleAndSoak"] = call.data[f"{prefix}cycle_and_soak"]
+                        if settings:
+                            run_settings[run_num - 1] = settings  # 0-indexed
+                    
+                    # Get program entity to extract program_id
+                    program_entity_id = call.data.get("program_id")
+                    entity_entry = registry.async_get(program_entity_id)
+                    if entity_entry and "_program_" in entity_entry.unique_id:
+                        program_id = entity_entry.unique_id.split("_program_")[1]
+                        device_id = entity_entry.unique_id.split("_program_")[0]
+                        
+                        # Find handler
+                        handler = None
+                        for device in hass.data[DOMAIN][entry.entry_id]["devices"].values():
+                            if device["handler"].device_id == device_id:
+                                handler = device["handler"]
+                                break
+                        
+                        if handler:
+                            # Fetch current program details
+                            async with ClientSession() as session:
+                                details = await handler._fetch_program_details(session, program_id, force_refresh=True)
+                                
+                                if details and "program" in details:
+                                    existing_runs = details["program"].get("plannedRuns", [])
+                                    
+                                    if existing_runs:
+                                        # Update each existing run with new valves and any provided settings
+                                        updated_runs = []
+                                        for run_idx, run in enumerate(existing_runs):
+                                            updated_run = run.copy()
+                                            updated_run["entityRuns"] = global_entity_runs
+                                            
+                                            # Apply any run-specific settings if provided
+                                            if run_idx in run_settings:
+                                                for key, value in run_settings[run_idx].items():
+                                                    updated_run[key] = value
+                                                    _LOGGER.debug(f"Run {run_idx + 1}: Updated {key} = {value}")
+                                            
+                                            updated_runs.append(updated_run)
+                                        
+                                        update_data["plannedRuns"] = {
+                                            "runs": updated_runs
+                                        }
+                                        _LOGGER.info(f"Updated {len(updated_runs)} existing run(s) with {len(global_entity_runs)} new valve(s)")
+                                    else:
+                                        _LOGGER.warning("No existing runs found - cannot update valves without specifying run timing")
+                                else:
+                                    _LOGGER.error("Failed to fetch existing program details")
+                        else:
+                            _LOGGER.error("Handler not found for program update")
+                    else:
+                        _LOGGER.error("Invalid program entity for valve-only update")
+            
+            # Handle advanced runs configuration (supports multiple runs per day)
+            elif "runs" in call.data:
+                runs_config = call.data["runs"]
+                if isinstance(runs_config, (list, dict)):
+                    # Handle both list format and dict format
+                    runs_list = runs_config if isinstance(runs_config, list) else [runs_config]
+                    
+                    # Get entity registry to resolve entity IDs to valve IDs
+                    from homeassistant.helpers import entity_registry as er
+                    registry = er.async_get(hass)
+                    
+                    processed_runs = []
+                    for run_idx, run_entry in enumerate(runs_list):
+                        if not isinstance(run_entry, dict):
+                            continue
+                        
+                        run_data = {}
+                        
+                        # Validate mutually exclusive start types within this run
+                        has_fixed_start = "start_time" in run_entry
+                        has_sun_start = "sun_event" in run_entry
+                        
+                        if has_fixed_start and has_sun_start:
+                            _LOGGER.error(
+                                f"Invalid run {run_idx + 1}: Both start_time and sun_event specified. "
+                                f"Only one can be used per run."
+                            )
+                            continue
+                        
+                        # Fixed start time
+                        if has_fixed_start:
+                            time_str = run_entry["start_time"]
+                            if isinstance(time_str, str) and ":" in time_str:
+                                parts = time_str.split(":")
+                                hour = int(parts[0])
+                                minute = int(parts[1]) if len(parts) > 1 else 0
+                                run_data["fixedStart"] = {
+                                    "startAt": {
+                                        "hour": hour,
+                                        "minute": minute,
+                                        "second": 0
+                                    }
+                                }
+                        
+                        # Sun-based start time
+                        elif has_sun_start:
+                            sun_event = run_entry["sun_event"]
+                            offset_minutes = run_entry.get("sun_offset_minutes", 0)
+                            offset_seconds = int(offset_minutes * 60)
+                            run_data["sunStart"] = {
+                                "sunEvent": sun_event,
+                                "offsetSeconds": str(offset_seconds)
+                            }
+                        
+                        # Process valves for this run
+                        if "valves" in run_entry:
+                            valves_config = run_entry["valves"]
+                            if isinstance(valves_config, (list, dict)):
+                                valve_list = valves_config if isinstance(valves_config, list) else [valves_config]
+                                
+                                entity_runs = []
+                                for valve_entry in valve_list:
+                                    if not isinstance(valve_entry, dict):
+                                        continue
+                                    
+                                    entity_id = valve_entry.get("entity_id")
+                                    duration = valve_entry.get("duration", 300)
+                                    
+                                    if not entity_id:
+                                        continue
+                                    
+                                    entity_entry = registry.async_get(entity_id)
+                                    if entity_entry:
+                                        valve_id = None
+                                        # Check for Smart Hose Timer zones (format: {device_id}_{zone_id}_zone)
+                                        if "_zone" in entity_entry.unique_id:
+                                            parts = entity_entry.unique_id.split("_zone")
+                                            if len(parts) == 2 and parts[0]:
+                                                # Extract zone_id (everything after device_id and before _zone)
+                                                device_and_zone = parts[0]
+                                                # Find device_id prefix and extract the zone_id part
+                                                # Format is: {device_id}_{zone_id}_zone
+                                                zone_id = device_and_zone.split("_", 1)[1] if "_" in device_and_zone else device_and_zone
+                                                valve_id = zone_id
+                                        # Check for controller valves (format: {device_id}_valve_{valve_id})
+                                        elif "_valve_" in entity_entry.unique_id:
+                                            valve_id = entity_entry.unique_id.split("_valve_")[-1]
+                                        
+                                        if valve_id:
+                                            entity_runs.append({
+                                                "entityId": valve_id,
+                                                "durationSec": str(duration)
+                                            })
+                                        else:
+                                            _LOGGER.warning(f"Entity {entity_id} is not a valve/zone entity (unique_id: {entity_entry.unique_id})")
+                                    else:
+                                        _LOGGER.warning(f"Entity {entity_id} not found in registry")
+                                
+                                if entity_runs:
+                                    run_data["entityRuns"] = entity_runs
+                        
+                        # Only add run if it has configuration
+                        if run_data:
+                            processed_runs.append(run_data)
+                            _LOGGER.debug(f"Added run {run_idx + 1}: {list(run_data.keys())}")
+                    
+                    if processed_runs:
+                        update_data["plannedRuns"] = {
+                            "runs": processed_runs
+                        }
+                        _LOGGER.info(f"Configured {len(processed_runs)} run(s) for program")
+            
+            await _handle_program_update(call, update_data)
         
         # Register services
         hass.services.async_register(DOMAIN, "enable_program", handle_enable_program)

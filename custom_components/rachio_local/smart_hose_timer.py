@@ -272,7 +272,7 @@ class RachioSmartHoseTimerHandler:
 
 
                 data = await self._make_request(session, url, method="POST", json_data=payload)
-                _LOGGER.debug(f"getValveDayViews API response (baseStationId={self.device_id}, end_days={summary_end_days}): {data}")
+                #_LOGGER.debug(f"getValveDayViews API response (baseStationId={self.device_id}, end_days={summary_end_days}): {data}")
 
                 # Store raw valve_day_views data for calendar
                 self.valve_day_views = data.get("valveDayViews", []) if data else []
