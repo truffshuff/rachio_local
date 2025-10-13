@@ -123,15 +123,15 @@ class RachioSmartHoseTimerCalendar(CalendarEntity):
         
         used_fallback = False
         if day_views:
-            _LOGGER.debug(f"Using valve_day_views for events (found {len(day_views)} days)")
+            #_LOGGER.debug(f"Using valve_day_views for events (found {len(day_views)} days)")
             for day in day_views:
-                _LOGGER.debug(f"Processing day: {day.get('date')}, program runs: {len(day.get('valveProgramRunSummaries', []))}, quick runs: {len(day.get('valveQuickRunSummaries', []))}")
+                #_LOGGER.debug(f"Processing day: {day.get('date')}, program runs: {len(day.get('valveProgramRunSummaries', []))}, quick runs: {len(day.get('valveQuickRunSummaries', []))}")
                 
                 # Process program runs
                 for vprs in day.get("valveProgramRunSummaries", []):
                     program_name = vprs.get("programName", vprs.get("programId", "Program"))
                     program_id = vprs.get("programId")
-                    _LOGGER.debug(f"Processing program: {program_name} (ID: {program_id}), valve runs: {len(vprs.get('valveRunSummaries', []))}")
+                    #_LOGGER.debug(f"Processing program: {program_name} (ID: {program_id}), valve runs: {len(vprs.get('valveRunSummaries', []))}")
                     
                     # Get the program start time from the first valve run
                     valve_runs = vprs.get("valveRunSummaries", [])
