@@ -84,6 +84,28 @@ run_1_start_time: "05:00"
 run_1_cycle_and_soak: true    # Prevents runoff
 ```
 
+### Example 7: Seasonal Program (Start on Specific Date)
+```yaml
+valves: [Garden, Lawn]
+valve_duration_1: "00:15:00"
+valve_duration_2: "00:10:00"
+run_1_start_time: "06:00"
+start_on_date: "2025-04-01"   # Start April 1st, 2025 (one-time)
+days_of_week: [Mon, Wed, Fri]
+```
+
+### Example 8: Annual Recurring Season
+```yaml
+valves: [Garden, Lawn]
+total_duration: "00:20:00"
+run_1_start_time: "06:00"
+start_on_month: 4      # April
+start_on_day: 1        # 1st
+end_on_month: 10       # October
+end_on_day: 31         # 31st (runs Apr 1 - Oct 31 every year)
+interval_days: 2
+```
+
 ## 🎮 How to Use in Home Assistant
 
 1. Go to **Developer Tools** → **Services**
@@ -146,6 +168,25 @@ run_1_cycle_and_soak: true    # Prevents runoff
 | `interval_days` | Every N days |
 | `even_days` | Even dates (2nd, 4th, 6th...) |
 | `odd_days` | Odd dates (1st, 3rd, 5th...) |
+
+### Other Settings:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | Boolean | Enable/disable program |
+| `name` | Text | Program name |
+| `rain_skip_enabled` | Boolean | Enable weather intelligence to skip on rain |
+| `color` | Color | Program color |
+
+### Start/End Dates (pick ONE mode):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `start_on_date` | Date (YYYY-MM-DD) | **Fixed Mode**: Start on specific date (one-time) |
+| `start_on_month` | Number (1-12) | **Annual Mode**: Start month (repeats every year) |
+| `start_on_day` | Number (1-31) | **Annual Mode**: Start day |
+| `end_on_month` | Number (1-12) | **Annual Mode**: End month (requires start fields) |
+| `end_on_day` | Number (1-31) | **Annual Mode**: End day (requires start fields) |
 
 ## 💡 Tips
 

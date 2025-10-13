@@ -63,7 +63,7 @@ disable_program:
 
 update_program:
   name: Update Program
-  description: "Update a Smart Hose Timer program's settings. Only include the fields you want to change. Note: Only ONE scheduling type can be used (days_of_week OR interval_days OR even_days OR odd_days)."
+  description: "Update a Smart Hose Timer program's settings. Only include the fields you want to change. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
   fields:
     program_id:
       name: Program
@@ -309,7 +309,7 @@ update_program:
     
     days_of_week:
       name: Days of Week
-      description: "Select days when program should run (for weekly schedules). Cannot be used with interval_days, even_days, or odd_days."
+      description: "Select days when program should run (for weekly schedules). Cannot be used with interval_days."
       required: false
       example: ["monday", "wednesday", "friday"]
       selector:
@@ -332,7 +332,7 @@ update_program:
               value: "sunday"
     interval_days:
       name: Interval Days
-      description: "Number of days between runs (for interval-based schedules). Cannot be used with days_of_week, even_days, or odd_days."
+      description: "Number of days between runs (for interval-based schedules). Cannot be used with days_of_week."
       required: false
       example: 3
       selector:
@@ -342,15 +342,4 @@ update_program:
           step: 1
           unit_of_measurement: days
           mode: box
-    even_days:
-      name: Even Days
-      description: "Run on even calendar days (e.g., 2nd, 4th, 6th). Cannot be used with days_of_week, interval_days, or odd_days."
-      required: false
-      selector:
-        boolean:
-    odd_days:
-      name: Odd Days
-      description: "Run on odd calendar days (e.g., 1st, 3rd, 5th). Cannot be used with days_of_week, interval_days, or even_days."
-      required: false
-      selector:
-        boolean:
+

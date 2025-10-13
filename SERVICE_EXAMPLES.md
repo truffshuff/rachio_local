@@ -179,6 +179,63 @@ data:
   valve_duration_1: "00:10:00"
   valve_duration_2: "00:15:00"
 ```
+
+#### Example 9: Seasonal Program with Start Date
+
+Configure a program to start watering on a specific date (e.g., spring season):
+
+```yaml
+service: rachio_local.update_program
+data:
+  program_id: sensor.smart_hose_timer_program_spring_watering
+  enabled: true
+  name: "Spring/Summer Watering"
+  # Set when program should start (fixed year)
+  start_on_date: "2025-04-01"  # Start April 1st, 2025
+  # Configure watering
+  valves:
+    - switch.smart_hose_timer_valve_lawn
+    - switch.smart_hose_timer_valve_garden
+  valve_duration_1: "00:20:00"  # Lawn: 20 minutes
+  valve_duration_2: "00:15:00"  # Garden: 15 minutes
+  # Run timing
+  run_1_start_time: "06:00"
+  run_2_start_time: "18:00"
+  # Schedule
+  days_of_week:
+    - monday
+    - wednesday
+    - friday
+```
+
+#### Example 10: Annual Recurring Seasonal Program
+
+Configure a program that runs every year between specific dates (e.g., spring/summer watering):
+
+```yaml
+service: rachio_local.update_program
+data:
+  program_id: sensor.smart_hose_timer_program_seasonal
+  enabled: true
+  name: "Spring/Summer Season"
+  # Annual start and end (repeats every year)
+  start_on_month: 4   # April
+  start_on_day: 1     # 1st
+  end_on_month: 10    # October
+  end_on_day: 31      # 31st
+  # This program will run April 1 - October 31 every year
+  # Configure watering
+  valves:
+    - switch.smart_hose_timer_valve_lawn
+    - switch.smart_hose_timer_valve_garden
+  valve_duration_1: "00:20:00"
+  valve_duration_2: "00:15:00"
+  run_1_start_time: "06:00"
+  days_of_week:
+    - monday
+    - wednesday
+    - friday
+```
     - switch.smart_hose_timer_valve_back_yard
   run_3_valve_duration: 900
   even_days: true  # Run on even days of the month
@@ -246,7 +303,12 @@ data:
    - `even_days` (for even calendar days)
    - `odd_days` (for odd calendar days)
 
-8. **Valve-Only Updates**: You can update just the valves without specifying run timing. The existing schedule will be preserved with new valves applied to all runs.
+8. **Start/End Dates**: Two modes for seasonal control:
+   - **Fixed Date** (one-time): Use `start_on_date` (format: YYYY-MM-DD)
+   - **Annual Recurring**: Use `start_on_month`/`start_on_day` and `end_on_month`/`end_on_day` (no year - repeats annually)
+   - Cannot mix both modes
+
+9. **Valve-Only Updates**: You can update just the valves without specifying run timing. The existing schedule will be preserved with new valves applied to all runs.
 
 ### Other Service Fields
 
@@ -254,8 +316,17 @@ You can combine run configuration with these other program settings:
 
 - `enabled`: `true` or `false` - Enable or disable the program
 - `name`: Change the program name
-- `rain_skip_enabled`: `true` or `false` - Enable/disable rain skip
+- `rain_skip_enabled`: `true` or `false` - Enable/disable rain skip (weather intelligence)
 - `color`: Program color as hex (e.g., "#00A7E1") or RGB list
+
+**Start/End Dates (two modes - pick one):**
+- **Fixed Date Mode** (one-time or specific year):
+  - `start_on_date`: Date in YYYY-MM-DD format (e.g., "2025-04-01")
+- **Annual Recurring Mode** (repeats every year):
+  - `start_on_month`: Month (1-12)
+  - `start_on_day`: Day (1-31)
+  - `end_on_month`: Month (1-12)
+  - `end_on_day`: Day (1-31)
 
 ### Full Example with All Options
 

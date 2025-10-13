@@ -235,12 +235,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 **update_data
             }
             
+            _LOGGER.debug(f"API payload being sent: {payload}")
+            
             try:
                 async with ClientSession() as session:
                     async with session.put(url, json=payload, headers=handler.headers) as resp:
                         if resp.status == 200:
                             result = await resp.json()
-                            _LOGGER.info(f"Successfully updated program {program_id}: {update_data}")
+                            _LOGGER.info(f"Successfully updated program {program_id}")
                             _LOGGER.debug(f"API response: {result}")
                             
                             # Force refresh of only this program's details to reflect changes
@@ -309,16 +311,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 scheduling_types.append("days_of_week")
             if "interval_days" in call.data:
                 scheduling_types.append("interval_days")
-            if "even_days" in call.data and call.data["even_days"]:
-                scheduling_types.append("even_days")
-            if "odd_days" in call.data and call.data["odd_days"]:
-                scheduling_types.append("odd_days")
             
             # Check if more than one scheduling type is specified
             if len(scheduling_types) > 1:
                 _LOGGER.error(
                     f"Invalid program update: Multiple scheduling types specified ({', '.join(scheduling_types)}). "
-                    f"Only one of the following can be used: days_of_week, interval_days, even_days, or odd_days."
+                    f"Only one of the following can be used: days_of_week or interval_days."
                 )
                 return
             
@@ -355,12 +353,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     update_data["dailyInterval"] = {
                         "intervalDays": int(interval)
                     }
-            
-            # Even/odd days
-            if "even_days" in call.data:
-                update_data["evenDays"] = call.data["even_days"]
-            if "odd_days" in call.data:
-                update_data["oddDays"] = call.data["odd_days"]
             
             # Check if user provided easy UI fields (run_1, run_2, run_3) or advanced runs field
             has_easy_runs = (
