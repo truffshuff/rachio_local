@@ -168,6 +168,151 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await coordinator.async_config_entry_first_refresh()
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        
+        # Register Smart Hose Timer program management services
+        async def handle_enable_program(call):
+            """Handle enable_program service call."""
+            await _handle_program_update(call, {"enabled": True})
+        
+        async def handle_disable_program(call):
+            """Handle disable_program service call."""
+            await _handle_program_update(call, {"enabled": False})
+        
+        async def handle_update_program(call):
+            """Handle update_program service call."""
+            # Build update payload from service data
+            update_data = {}
+            if "enabled" in call.data:
+                update_data["enabled"] = call.data["enabled"]
+            if "name" in call.data:
+                update_data["name"] = call.data["name"]
+            if "rain_skip_enabled" in call.data:
+                update_data["rainSkipEnabled"] = call.data["rain_skip_enabled"]
+            if "color" in call.data:
+                # Convert RGB list to hex color if needed
+                color = call.data["color"]
+                if isinstance(color, (list, tuple)) and len(color) == 3:
+                    update_data["color"] = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+                else:
+                    update_data["color"] = color
+            
+            await _handle_program_update(call, update_data)
+        
+        async def _handle_program_update(call, update_data: dict):
+            """Common handler for program update operations."""
+            program_entity_id = call.data.get("program_id")
+            if not program_entity_id:
+                _LOGGER.error("No program_id provided in service call")
+                return
+            
+            # Get the entity from the entity registry
+            from homeassistant.helpers import entity_registry as er
+            registry = er.async_get(hass)
+            entity_entry = registry.async_get(program_entity_id)
+            
+            if not entity_entry:
+                _LOGGER.error(f"Entity {program_entity_id} not found in registry")
+                return
+            
+            # Extract program_id from unique_id (format: {device_id}_program_{program_id})
+            if "_program_" not in entity_entry.unique_id:
+                _LOGGER.error(
+                    f"Entity {program_entity_id} is not a program sensor. "
+                    f"Please select a sensor entity whose name starts with 'Program:'"
+                )
+                return
+            
+            unique_id_parts = entity_entry.unique_id.split("_program_")
+            if len(unique_id_parts) != 2:
+                _LOGGER.error(f"Invalid unique_id format for entity {program_entity_id}: {entity_entry.unique_id}")
+                return
+            
+            program_id = unique_id_parts[1]
+            device_id = unique_id_parts[0]
+            
+            # Find the handler for this device
+            handler = None
+            for device in hass.data[DOMAIN][entry.entry_id]["devices"].values():
+                if device["handler"].device_id == device_id:
+                    handler = device["handler"]
+                    break
+            
+            if not handler:
+                _LOGGER.error(f"Handler not found for device {device_id}")
+                return
+            
+            # Verify this is a Smart Hose Timer
+            from .smart_hose_timer import RachioSmartHoseTimerHandler
+            if not isinstance(handler, RachioSmartHoseTimerHandler):
+                _LOGGER.error(f"Device {handler.name} is not a Smart Hose Timer")
+                return
+            
+            # Make API call to update program
+            url = f"{CLOUD_BASE_URL}/program/updateProgramV2"
+            payload = {
+                "id": program_id,
+                **update_data
+            }
+            
+            try:
+                async with ClientSession() as session:
+                    async with session.put(url, json=payload, headers=handler.headers) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            _LOGGER.info(f"Successfully updated program {program_id}: {update_data}")
+                            
+                            # Force refresh of only this program's details to reflect changes
+                            details = await handler._fetch_program_details(session, program_id, force_refresh=True)
+                            
+                            # Update the program in handler.schedules with fresh data from API
+                            if details and "program" in details:
+                                program_details = details["program"]
+                                for program in handler.schedules:
+                                    if program.get("id") == program_id:
+                                        # Merge all details from API response
+                                        program["enabled"] = program_details.get("enabled", True)
+                                        program["name"] = program_details.get("name", program.get("name"))
+                                        program["color"] = program_details.get("color", "#00A7E1")
+                                        program["startOn"] = program_details.get("startOn", {})
+                                        program["dailyInterval"] = program_details.get("dailyInterval", {})
+                                        program["plannedRuns"] = program_details.get("plannedRuns", [])
+                                        program["assignments"] = program_details.get("assignments", [])
+                                        program["rainSkipEnabled"] = program_details.get("rainSkipEnabled", False)
+                                        program["settings"] = program_details.get("settings", {})
+                                        
+                                        # Copy scheduling type fields
+                                        if "daysOfWeek" in program_details:
+                                            program["daysOfWeek"] = program_details["daysOfWeek"]
+                                        if "evenDays" in program_details:
+                                            program["evenDays"] = program_details["evenDays"]
+                                        if "oddDays" in program_details:
+                                            program["oddDays"] = program_details["oddDays"]
+                                        
+                                        # Update valve IDs from assignments
+                                        if program_details.get("assignments"):
+                                            valve_ids = [a.get("entityId") for a in program_details["assignments"] if a.get("entityId")]
+                                            if valve_ids:
+                                                program["valveIds"] = valve_ids
+                                        
+                                        _LOGGER.info(f"Updated local program data for {program_id}")
+                                        break
+                            
+                            # Trigger a lightweight coordinator data update without polling
+                            # This notifies entities to refresh their state from handler.schedules
+                            handler.coordinator.async_set_updated_data(handler.coordinator.data)
+                            _LOGGER.info(f"Program {program_id} updated - triggered entity refresh (no additional API calls)")
+                        else:
+                            error_text = await resp.text()
+                            _LOGGER.error(f"Failed to update program {program_id}: {resp.status} - {error_text}")
+            except Exception as err:
+                _LOGGER.error(f"Error updating program {program_id}: {err}")
+        
+        # Register services
+        hass.services.async_register(DOMAIN, "enable_program", handle_enable_program)
+        hass.services.async_register(DOMAIN, "disable_program", handle_disable_program)
+        hass.services.async_register(DOMAIN, "update_program", handle_update_program)
+        _LOGGER.info("Registered Smart Hose Timer program management services")
+        
         return True
 
     except Exception as err:
@@ -179,4 +324,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        
+        # Unregister services
+        hass.services.async_remove(DOMAIN, "enable_program")
+        hass.services.async_remove(DOMAIN, "disable_program")
+        hass.services.async_remove(DOMAIN, "update_program")
+        _LOGGER.info("Unregistered Smart Hose Timer program management services")
+        
     return unload_ok

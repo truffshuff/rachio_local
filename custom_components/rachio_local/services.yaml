@@ -28,3 +28,76 @@ turn_off:
     entity:
       integration: rachio_local
       domain: switch
+
+# Smart Hose Timer Program Management Services
+
+enable_program:
+  name: Enable Program
+  description: Enable a Smart Hose Timer program
+  fields:
+    program_id:
+      name: Program
+      description: "Select a program sensor (entities starting with 'Program:')"
+      required: true
+      example: sensor.smart_hose_timer_program_morning_watering
+      selector:
+        entity:
+          integration: rachio_local
+          domain: sensor
+          multiple: false
+
+disable_program:
+  name: Disable Program
+  description: Disable a Smart Hose Timer program
+  fields:
+    program_id:
+      name: Program
+      description: "Select a program sensor (entities starting with 'Program:')"
+      required: true
+      example: sensor.smart_hose_timer_program_evening_watering
+      selector:
+        entity:
+          integration: rachio_local
+          domain: sensor
+          multiple: false
+
+update_program:
+  name: Update Program
+  description: Update a Smart Hose Timer program's settings
+  fields:
+    program_id:
+      name: Program
+      description: "Select a program sensor (entities starting with 'Program:')"
+      required: true
+      example: sensor.smart_hose_timer_program_morning_watering
+      selector:
+        entity:
+          integration: rachio_local
+          domain: sensor
+          multiple: false
+    enabled:
+      name: Enabled
+      description: Enable or disable the program
+      required: false
+      selector:
+        boolean:
+    name:
+      name: Name
+      description: Program name
+      required: false
+      example: "Morning Watering"
+      selector:
+        text:
+    rain_skip_enabled:
+      name: Rain Skip Enabled
+      description: Enable or disable rain skip for this program
+      required: false
+      selector:
+        boolean:
+    color:
+      name: Color
+      description: Program color in hex format (e.g., #00A7E1)
+      required: false
+      example: "#00A7E1"
+      selector:
+        color_rgb:

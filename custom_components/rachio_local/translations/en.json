@@ -18,5 +18,53 @@
         "abort": {
             "already_configured": "Device is already configured"
         }
+    },
+    "services": {
+        "enable_program": {
+            "name": "Enable program",
+            "description": "Enable a Smart Hose Timer program.",
+            "fields": {
+                "program_id": {
+                    "name": "Program",
+                    "description": "The program to enable (select a Program sensor entity)."
+                }
+            }
+        },
+        "disable_program": {
+            "name": "Disable program",
+            "description": "Disable a Smart Hose Timer program.",
+            "fields": {
+                "program_id": {
+                    "name": "Program",
+                    "description": "The program to disable (select a Program sensor entity)."
+                }
+            }
+        },
+        "update_program": {
+            "name": "Update program",
+            "description": "Update a Smart Hose Timer program's settings.",
+            "fields": {
+                "program_id": {
+                    "name": "Program",
+                    "description": "The program to update (select a Program sensor entity)."
+                },
+                "enabled": {
+                    "name": "Enabled",
+                    "description": "Enable or disable the program."
+                },
+                "name": {
+                    "name": "Name",
+                    "description": "Program name."
+                },
+                "rain_skip_enabled": {
+                    "name": "Rain skip enabled",
+                    "description": "Enable or disable rain skip for this program."
+                },
+                "color": {
+                    "name": "Color",
+                    "description": "Program color in hex format (e.g., #00A7E1)."
+                }
+            }
+        }
     }
 }
