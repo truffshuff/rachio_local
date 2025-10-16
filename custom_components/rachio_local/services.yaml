@@ -61,6 +61,350 @@ disable_program:
           domain: sensor
           multiple: false
 
+create_program:
+  name: Create Program
+  description: "Create a new Smart Hose Timer program. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
+  fields:
+    device_id:
+      name: Device
+      description: "Select the Smart Hose Timer device to create the program on"
+      required: true
+      example: "abc123def456"
+      selector:
+        text:
+    enabled:
+      name: Enabled
+      description: Enable or disable the program
+      required: false
+      default: true
+      selector:
+        boolean:
+    name:
+      name: Name
+      description: Program name
+      required: true
+      example: "Morning Watering"
+      selector:
+        text:
+    rain_skip_enabled:
+      name: Rain Skip Enabled
+      description: Enable or disable rain skip for this program
+      required: false
+      default: true
+      selector:
+        boolean:
+    color:
+      name: Color
+      description: Program color in hex format (e.g., #00A7E1)
+      required: false
+      example: "#00A7E1"
+      selector:
+        color_rgb:
+    
+    # Program schedule start/end dates (REQUIRED for create)
+    start_on_year:
+      name: Start Year
+      description: "Year the program schedule becomes active (required)"
+      required: true
+      example: 2024
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    start_on_month:
+      name: Start Month
+      description: "Month the program schedule becomes active (1-12, required)"
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+    start_on_day:
+      name: Start Day
+      description: "Day the program schedule becomes active (1-31, required)"
+      required: true
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 31
+          mode: box
+    end_on_year:
+      name: End Year
+      description: "Year the program schedule ends (required)"
+      required: true
+      example: 2024
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    end_on_month:
+      name: End Month
+      description: "Month the program schedule ends (1-12, required)"
+      required: true
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+    end_on_day:
+      name: End Day
+      description: "Day the program schedule ends (1-31, required)"
+      required: true
+      example: 31
+      selector:
+        number:
+          min: 1
+          max: 31
+          mode: box
+    
+    runs:
+      name: Program Runs (Advanced)
+      description: "ADVANCED: Configure runs using YAML/JSON array. Use the run_1, run_2, run_3 fields below for easier configuration. Each run can have 'start_time' OR 'sun_event'+'sun_offset_minutes', plus optional 'valves' array."
+      required: false
+      example: '[{"start_time": "06:00", "valves": [{"entity_id": "switch.valve_1", "duration": 300}]}, {"sun_event": "AFTER_SET", "sun_offset_minutes": 30, "valves": [{"entity_id": "switch.valve_2", "duration": 200}]}]'
+      advanced: true
+      selector:
+        object:
+    
+    # Global Valve Configuration
+    valves:
+      name: Valves
+      description: "Select one or more valves/zones to water (used by all runs)"
+      required: false
+      selector:
+        entity:
+          integration: rachio_local
+          domain: switch
+          multiple: true
+    total_duration:
+      name: Total Duration
+      description: "Total duration for each run, automatically split equally across all selected valves. Use this for simple equal watering. Format: HH:MM:SS"
+      required: false
+      default: "00:05:00"
+      example: "00:15:00"
+      selector:
+        time:
+    valve_duration_1:
+      name: Valve 1 Duration (Optional)
+      description: "Duration for the first selected valve. If specified, overrides the equal split from 'total_duration'. Format: HH:MM:SS"
+      required: false
+      example: "00:10:00"
+      selector:
+        time:
+    valve_duration_2:
+      name: Valve 2 Duration (Optional)
+      description: "Duration for the second selected valve. If specified, overrides the equal split from 'total_duration'. Format: HH:MM:SS"
+      required: false
+      example: "00:05:00"
+      selector:
+        time:
+    valve_duration_3:
+      name: Valve 3 Duration (Optional)
+      description: "Duration for the third selected valve. If specified, overrides the equal split from 'total_duration'. Format: HH:MM:SS"
+      required: false
+      example: "00:08:00"
+      selector:
+        time:
+    valve_duration_4:
+      name: Valve 4 Duration (Optional)
+      description: "Duration for the fourth selected valve. If specified, overrides the equal split from 'total_duration'. Format: HH:MM:SS"
+      required: false
+      example: "00:12:00"
+      selector:
+        time:
+    
+    # Run 1 - Timing Only
+    run_1_start_time:
+      name: Run 1 - Start Time
+      description: "First run: Set a fixed start time (leave empty to skip this run)"
+      required: false
+      example: "06:00"
+      selector:
+        time:
+    run_1_sun_event:
+      name: Run 1 - Sun Event (Optional)
+      description: "First run: OR use sun-based timing instead of fixed time"
+      required: false
+      selector:
+        select:
+          options:
+            - label: "Before Sunrise"
+              value: "BEFORE_RISE"
+            - label: "After Sunrise"
+              value: "AFTER_RISE"
+            - label: "Before Sunset"
+              value: "BEFORE_SET"
+            - label: "After Sunset"
+              value: "AFTER_SET"
+    run_1_sun_offset:
+      name: Run 1 - Sun Offset Minutes
+      description: "Offset in minutes for sun event (use with sun event above)"
+      required: false
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          unit_of_measurement: minutes
+          mode: box
+    run_1_run_concurrently:
+      name: Run 1 - Run Concurrently
+      description: "Run all valves at the same time instead of sequentially"
+      required: false
+      default: false
+      selector:
+        boolean:
+    run_1_cycle_and_soak:
+      name: Run 1 - Cycle and Soak
+      description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
+      required: false
+      default: false
+      selector:
+        boolean:
+    
+    # Run 2 - Timing Only
+    run_2_start_time:
+      name: Run 2 - Start Time
+      description: "Second run: Set a fixed start time (leave empty to skip this run)"
+      required: false
+      example: "18:00"
+      selector:
+        time:
+    run_2_sun_event:
+      name: Run 2 - Sun Event (Optional)
+      description: "Second run: OR use sun-based timing instead of fixed time"
+      required: false
+      selector:
+        select:
+          options:
+            - label: "Before Sunrise"
+              value: "BEFORE_RISE"
+            - label: "After Sunrise"
+              value: "AFTER_RISE"
+            - label: "Before Sunset"
+              value: "BEFORE_SET"
+            - label: "After Sunset"
+              value: "AFTER_SET"
+    run_2_sun_offset:
+      name: Run 2 - Sun Offset Minutes
+      description: "Offset in minutes for sun event (use with sun event above)"
+      required: false
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          unit_of_measurement: minutes
+          mode: box
+    run_2_run_concurrently:
+      name: Run 2 - Run Concurrently
+      description: "Run all valves at the same time instead of sequentially"
+      required: false
+      default: false
+      selector:
+        boolean:
+    run_2_cycle_and_soak:
+      name: Run 2 - Cycle and Soak
+      description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
+      required: false
+      default: false
+      selector:
+        boolean:
+    
+    # Run 3 - Timing Only
+    run_3_start_time:
+      name: Run 3 - Start Time
+      description: "Third run: Set a fixed start time (leave empty to skip this run)"
+      required: false
+      example: "12:00"
+      selector:
+        time:
+    run_3_sun_event:
+      name: Run 3 - Sun Event (Optional)
+      description: "Third run: OR use sun-based timing instead of fixed time"
+      required: false
+      selector:
+        select:
+          options:
+            - label: "Before Sunrise"
+              value: "BEFORE_RISE"
+            - label: "After Sunrise"
+              value: "AFTER_RISE"
+            - label: "Before Sunset"
+              value: "BEFORE_SET"
+            - label: "After Sunset"
+              value: "AFTER_SET"
+    run_3_sun_offset:
+      name: Run 3 - Sun Offset Minutes
+      description: "Offset in minutes for sun event (use with sun event above)"
+      required: false
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          unit_of_measurement: minutes
+          mode: box
+    run_3_run_concurrently:
+      name: Run 3 - Run Concurrently
+      description: "Run all valves at the same time instead of sequentially"
+      required: false
+      default: false
+      selector:
+        boolean:
+    run_3_cycle_and_soak:
+      name: Run 3 - Cycle and Soak
+      description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
+      required: false
+      default: false
+      selector:
+        boolean:
+    
+    days_of_week:
+      name: Days of Week
+      description: "Select days when program should run (for weekly schedules). Cannot be used with interval_days."
+      required: false
+      example: ["monday", "wednesday", "friday"]
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Monday
+              value: "monday"
+            - label: Tuesday
+              value: "tuesday"
+            - label: Wednesday
+              value: "wednesday"
+            - label: Thursday
+              value: "thursday"
+            - label: Friday
+              value: "friday"
+            - label: Saturday
+              value: "saturday"
+            - label: Sunday
+              value: "sunday"
+    interval_days:
+      name: Interval Days
+      description: "Number of days between runs (for interval-based schedules). Cannot be used with days_of_week."
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: days
+          mode: box
+
 update_program:
   name: Update Program
   description: "Update a Smart Hose Timer program's settings. Only include the fields you want to change. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
@@ -101,6 +445,69 @@ update_program:
       example: "#00A7E1"
       selector:
         color_rgb:
+    
+    # Program schedule start/end dates (optional for update)
+    start_on_year:
+      name: Start Year
+      description: "Year the program schedule becomes active"
+      required: false
+      example: 2024
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    start_on_month:
+      name: Start Month
+      description: "Month the program schedule becomes active (1-12)"
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+    start_on_day:
+      name: Start Day
+      description: "Day the program schedule becomes active (1-31)"
+      required: false
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 31
+          mode: box
+    end_on_year:
+      name: End Year
+      description: "Year the program schedule ends"
+      required: false
+      example: 2024
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    end_on_month:
+      name: End Month
+      description: "Month the program schedule ends (1-12)"
+      required: false
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+    end_on_day:
+      name: End Day
+      description: "Day the program schedule ends (1-31)"
+      required: false
+      example: 31
+      selector:
+        number:
+          min: 1
+          max: 31
+          mode: box
+    
     runs:
       name: Program Runs (Advanced)
       description: "ADVANCED: Configure runs using YAML/JSON array. Use the run_1, run_2, run_3 fields below for easier configuration. Each run can have 'start_time' OR 'sun_event'+'sun_offset_minutes', plus optional 'valves' array."
