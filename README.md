@@ -70,9 +70,88 @@ Whether schedules overlap
 
 ## 🔧 Smart Hose Timer Program Management Services
 
-The integration now provides three powerful services for managing Smart Hose Timer programs:
+The integration now provides four powerful services for managing Smart Hose Timer programs:
 
-### 1. Enable Program (`rachio_local.enable_program`)
+### 1. Create Program (`rachio_local.create_program`)
+
+Create a new Smart Hose Timer watering program from scratch with full control over schedule, runs, and valves.
+
+**⚠️ Important:** Only **ONE** scheduling type can be used per program: `days_of_week` **OR** `interval_days`. Specifying multiple scheduling types will result in an error.
+
+**Required Parameters:**
+- `name` (required): Program name
+- `start_on_date` (required): Date when program becomes active (date picker: YYYY-MM-DD)
+- `end_on_date` (optional): Date when program ends (creates seasonal program if provided, annual recurring if omitted)
+- **Schedule** - Choose ONE:
+  - `days_of_week` (required): Specific days to run (e.g., monday, wednesday, friday)
+  - `interval_days` (required): Days between runs (e.g., 3 for every 3 days)
+- **At least one run with timing:**
+  - `run_1_start_time` OR `run_1_sun_event` (+ `run_1_sun_offset`)
+- `valves` (required): One or more valves/zones to water
+
+**Optional Parameters:**
+- `rain_skip_enabled` (optional): Enable rain skip (default: true)
+- `color` (optional): Program color in hex format
+- `run_X_run_concurrently` (optional): Run valves simultaneously vs sequentially
+- `run_X_cycle_and_soak` (optional): Enable cycle and soak feature
+- Individual valve durations (`valve_duration_1`, `valve_duration_2`, etc.) or `total_duration`
+
+**Example YAML - Simple weekly schedule:**
+```yaml
+service: rachio_local.create_program
+data:
+  name: "Summer Morning Watering"
+  start_on_date: "2024-05-01"
+  end_on_date: "2024-09-30"
+  days_of_week:
+    - monday
+    - wednesday
+    - friday
+  run_1_start_time: "06:00"
+  valves:
+    - switch.front_lawn_zone
+    - switch.back_lawn_zone
+  total_duration: "00:20:00"  # 10 minutes per zone
+```
+
+**Example YAML - Interval schedule with sun-based timing:**
+```yaml
+service: rachio_local.create_program
+data:
+  name: "Every 3 Days at Sunrise"
+  start_on_date: "2024-03-15"
+  end_on_date: "2024-10-31"
+  interval_days: 3
+  run_1_sun_event: "AFTER_RISE"
+  run_1_sun_offset: 15  # 15 minutes after sunrise
+  valves:
+    - switch.garden_zone
+  total_duration: "00:15:00"
+  rain_skip_enabled: true
+```
+
+**Example YAML - Multiple runs with individual valve durations:**
+```yaml
+service: rachio_local.create_program
+data:
+  name: "Two-Phase Watering"
+  start_on_date: "2024-04-01"
+  interval_days: 2
+  run_1_sun_event: "AFTER_RISE"
+  run_1_sun_offset: 15
+  run_2_start_time: "18:00"
+  valves:
+    - switch.front_yard
+    - switch.back_yard
+    - switch.garden
+  valve_duration_1: "00:15:00"  # Front needs more
+  valve_duration_2: "00:10:00"  # Back needs less
+  valve_duration_3: "00:08:00"  # Garden needs least
+```
+
+**Note:** Programs are automatically enabled when created. Use `rachio_local.disable_program` to disable them after creation if needed.
+
+### 2. Enable Program (`rachio_local.enable_program`)
 
 Enable a disabled Smart Hose Timer program.
 
@@ -86,7 +165,7 @@ data:
   program_id: sensor.smart_hose_timer_program_morning_watering
 ```
 
-### 2. Disable Program (`rachio_local.disable_program`)
+### 3. Disable Program (`rachio_local.disable_program`)
 
 Disable an active Smart Hose Timer program.
 
@@ -100,7 +179,7 @@ data:
   program_id: sensor.smart_hose_timer_program_evening_watering
 ```
 
-### 3. Update Program (`rachio_local.update_program`)
+### 4. Update Program (`rachio_local.update_program`)
 
 Update multiple settings of a Smart Hose Timer program at once. You only need to include the settings you want to change.
 

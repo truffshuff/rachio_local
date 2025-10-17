@@ -302,31 +302,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         async def handle_create_program(call):
             """Handle create_program service call."""
-            # Build create payload from service data (similar to update but different endpoint)
+            # Build create payload from service data
             create_data = {}
-            
-            # Get device_id (required for create)
-            device_id = call.data.get("device_id")
-            if not device_id:
-                _LOGGER.error("No device_id provided for create_program")
-                return
-            
-            # Find the handler for this device
-            handler = None
-            for device in hass.data[DOMAIN][entry.entry_id]["devices"].values():
-                if device["handler"].device_id == device_id:
-                    handler = device["handler"]
-                    break
-            
-            if not handler:
-                _LOGGER.error(f"Handler not found for device {device_id}")
-                return
-            
-            # Verify this is a Smart Hose Timer
-            from .smart_hose_timer import RachioSmartHoseTimerHandler
-            if not isinstance(handler, RachioSmartHoseTimerHandler):
-                _LOGGER.error(f"Device {handler.name} is not a Smart Hose Timer")
-                return
             
             # Validate mutually exclusive scheduling options
             scheduling_types = []
@@ -343,39 +320,96 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 return
             
+            # Check if at least one scheduling type is specified
+            if len(scheduling_types) == 0:
+                _LOGGER.error(
+                    "Invalid program create: No scheduling type specified. "
+                    "You must specify either 'days_of_week' or 'interval_days'."
+                )
+                return
+            
             # Required fields
             if "name" not in call.data:
                 _LOGGER.error("Program name is required for create_program")
                 return
             
-            # Validate required date fields
-            required_date_fields = [
-                "start_on_year", "start_on_month", "start_on_day",
-                "end_on_year", "end_on_month", "end_on_day"
-            ]
-            missing_date_fields = [f for f in required_date_fields if f not in call.data]
-            if missing_date_fields:
-                _LOGGER.error(f"Missing required date fields for create_program: {', '.join(missing_date_fields)}")
+            # Validate date fields - at least start_on_date is required
+            has_start_date = "start_on_date" in call.data
+            has_end_date = "end_on_date" in call.data
+            
+            if not has_start_date:
+                _LOGGER.error("Start date is required for create_program")
                 return
             
-            # Simple boolean/string fields
-            create_data["deviceId"] = device_id
+            # Parse date picker format (YYYY-MM-DD string or date object)
+            from datetime import date as date_type
+            
+            start_date = call.data["start_on_date"]
+            
+            # Handle both string and date object inputs for start date
+            if isinstance(start_date, str):
+                try:
+                    start_parts = start_date.split("-")
+                    start_year = int(start_parts[0])
+                    start_month = int(start_parts[1])
+                    start_day = int(start_parts[2])
+                except (ValueError, IndexError) as e:
+                    _LOGGER.error(f"Invalid start_on_date format: {start_date}. Expected YYYY-MM-DD")
+                    return
+            elif isinstance(start_date, date_type):
+                start_year = start_date.year
+                start_month = start_date.month
+                start_day = start_date.day
+            else:
+                _LOGGER.error(f"Invalid start_on_date type: {type(start_date)}")
+                return
+            
+            # Simple fields
             create_data["name"] = call.data["name"]
-            create_data["enabled"] = call.data.get("enabled", True)
             
-            # Add start/end dates
-            create_data["startOn"] = {
-                "year": int(call.data["start_on_year"]),
-                "month": int(call.data["start_on_month"]),
-                "day": int(call.data["start_on_day"])
-            }
-            create_data["endOn"] = {
-                "year": int(call.data["end_on_year"]),
-                "month": int(call.data["end_on_month"]),
-                "day": int(call.data["end_on_day"])
-            }
-            
-            _LOGGER.debug(f"Program dates: start={create_data['startOn']}, end={create_data['endOn']}")
+            # Add dates based on what was provided
+            if has_end_date:
+                # Both dates provided - use startOn and endOn fields in settings (NO YEAR for seasonal)
+                end_date = call.data["end_on_date"]
+                
+                if isinstance(end_date, str):
+                    try:
+                        end_parts = end_date.split("-")
+                        end_year = int(end_parts[0])
+                        end_month = int(end_parts[1])
+                        end_day = int(end_parts[2])
+                    except (ValueError, IndexError) as e:
+                        _LOGGER.error(f"Invalid end_on_date format: {end_date}. Expected YYYY-MM-DD")
+                        return
+                elif isinstance(end_date, date_type):
+                    end_year = end_date.year
+                    end_month = end_date.month
+                    end_day = end_date.day
+                else:
+                    _LOGGER.error(f"Invalid end_on_date type: {type(end_date)}")
+                    return
+                
+                create_data["settings"] = {
+                    "startOn": {
+                        "month": start_month,
+                        "day": start_day
+                    },
+                    "endOn": {
+                        "month": end_month,
+                        "day": end_day
+                    }
+                }
+                _LOGGER.debug(f"Program dates: startOn={create_data['settings']['startOn']}, endOn={create_data['settings']['endOn']} (seasonal schedule)")
+            else:
+                # Only start date provided - use startOnDate field in settings (WITH YEAR for annual recurring)
+                create_data["settings"] = {
+                    "startOnDate": {
+                        "year": start_year,
+                        "month": start_month,
+                        "day": start_day
+                    }
+                }
+                _LOGGER.debug(f"Program date: startOnDate={create_data['settings']['startOnDate']} (annual recurring schedule)")
             
             if "rain_skip_enabled" in call.data:
                 create_data["rainSkipEnabled"] = call.data["rain_skip_enabled"]
@@ -497,6 +531,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         else:
                             _LOGGER.warning(f"Entity {entity_id} not found in registry")
                 
+                # Infer device_id and handler from the first valve (required for API call)
+                handler = None
+                device_id = None
+                
+                if global_valves:
+                    first_valve_id = global_valves[0]
+                    entity_entry = registry.async_get(first_valve_id)
+                    if entity_entry:
+                        unique_id = entity_entry.unique_id
+                        # Extract device_id from valve unique_id
+                        if "_zone" in unique_id:
+                            # Format: {device_id}_{zone_id}_zone
+                            device_id = unique_id.split("_zone")[0].rsplit("_", 1)[0]
+                        elif "_valve_" in unique_id:
+                            # Format: {device_id}_valve_{valve_id}
+                            device_id = unique_id.split("_valve_")[0]
+                        
+                        if device_id:
+                            _LOGGER.debug(f"Inferred device_id '{device_id}' from valve {first_valve_id}")
+                            
+                            # Find handler for inferred device
+                            for device in hass.data[DOMAIN][entry.entry_id]["devices"].values():
+                                if device["handler"].device_id == device_id:
+                                    handler = device["handler"]
+                                    break
+                            
+                            if not handler:
+                                _LOGGER.error(f"Handler not found for inferred device {device_id}")
+                                return
+                            
+                            # Verify this is a Smart Hose Timer
+                            from .smart_hose_timer import RachioSmartHoseTimerHandler
+                            if not isinstance(handler, RachioSmartHoseTimerHandler):
+                                _LOGGER.error(f"Device {handler.name} is not a Smart Hose Timer")
+                                return
+                        else:
+                            _LOGGER.error(f"Could not infer device_id from valve {first_valve_id}")
+                            return
+                    else:
+                        _LOGGER.error(f"Could not access valve entity {first_valve_id} to infer device_id")
+                        return
+                else:
+                    _LOGGER.error("No valves specified - cannot create program without valves")
+                    return
+                
                 # Now process each run's timing configuration
                 processed_runs = []
                 
@@ -568,14 +647,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         processed_runs.append(run_data)
                         _LOGGER.info(f"Run {run_num}: Configured with {len(run_data.get('entityRuns', []))} valve(s)")
                 
-                # Add runs if any were configured
+                # Add runs if any were configured (API expects a direct array)
                 if processed_runs:
-                    create_data["plannedRuns"] = {
-                        "runs": processed_runs
-                    }
+                    create_data["plannedRuns"] = processed_runs
                     _LOGGER.info(f"Configured {len(processed_runs)} run(s) with {len(global_entity_runs)} valve(s) each")
                 else:
-                    _LOGGER.warning("No runs configured - at least one run with timing must be specified")
+                    _LOGGER.error(
+                        "Invalid program create: No runs configured. "
+                        "At least one run must have either a Start Time or Sun Event specified."
+                    )
+                    return
             
             # Handle advanced runs configuration (supports multiple runs per day)
             elif "runs" in call.data:
@@ -684,10 +765,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             _LOGGER.debug(f"Added run {run_idx + 1}: {list(run_data.keys())}")
                     
                     if processed_runs:
-                        create_data["plannedRuns"] = {
-                            "runs": processed_runs
-                        }
+                        create_data["plannedRuns"] = processed_runs
                         _LOGGER.info(f"Configured {len(processed_runs)} run(s) for program")
+                    else:
+                        _LOGGER.error(
+                            "Invalid program create: No runs configured in advanced runs field. "
+                            "At least one run must have either a start_time or sun_event specified."
+                        )
+                        return
+            
+            # Final validation before API call
+            if "plannedRuns" not in create_data or not create_data["plannedRuns"]:
+                _LOGGER.error(
+                    "Invalid program create: No runs configured. "
+                    "You must specify at least one run with timing (Start Time or Sun Event) and valves."
+                )
+                return
             
             # Make the API call
             url = f"{CLOUD_BASE_URL}/program/createProgramV2"
@@ -748,37 +841,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     update_data["color"] = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
                 else:
                     update_data["color"] = color
-            
-            # Start/end dates (optional for update - must provide all 3 fields for each date)
-            start_date_fields = ["start_on_year", "start_on_month", "start_on_day"]
-            end_date_fields = ["end_on_year", "end_on_month", "end_on_day"]
-            
-            has_start_fields = any(f in call.data for f in start_date_fields)
-            has_end_fields = any(f in call.data for f in end_date_fields)
-            
-            if has_start_fields:
-                missing_start = [f for f in start_date_fields if f not in call.data]
-                if missing_start:
-                    _LOGGER.error(f"Incomplete start date - missing fields: {', '.join(missing_start)}")
-                    return
-                update_data["startOn"] = {
-                    "year": int(call.data["start_on_year"]),
-                    "month": int(call.data["start_on_month"]),
-                    "day": int(call.data["start_on_day"])
-                }
-                _LOGGER.debug(f"Updating start date: {update_data['startOn']}")
-            
-            if has_end_fields:
-                missing_end = [f for f in end_date_fields if f not in call.data]
-                if missing_end:
-                    _LOGGER.error(f"Incomplete end date - missing fields: {', '.join(missing_end)}")
-                    return
-                update_data["endOn"] = {
-                    "year": int(call.data["end_on_year"]),
-                    "month": int(call.data["end_on_month"]),
-                    "day": int(call.data["end_on_day"])
-                }
-                _LOGGER.debug(f"Updating end date: {update_data['endOn']}")
             
             # Days of week - convert to daysOfWeek object with uppercase day names
             if "days_of_week" in call.data:

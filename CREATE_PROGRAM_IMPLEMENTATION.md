@@ -6,12 +6,11 @@ The `create_program` service allows users to create new watering programs on the
 ## Required Fields
 
 ### Essential Program Information
-- **device_id** (text): The device ID of the Smart Hose Timer
 - **name** (text): Name for the new program (e.g., "Morning Watering")
 
 ### Program Schedule Dates
-- **start_on_year**, **start_on_month**, **start_on_day**: When the program schedule becomes active
-- **end_on_year**, **end_on_month**, **end_on_day**: When the program schedule ends
+- **start_on_date** (date picker): Date when the program schedule becomes active
+- **end_on_date** (date picker): Date when the program schedule ends
 
 ### Schedule Type (Choose ONE)
 - **days_of_week** (multi-select): Specific days the program runs (e.g., Monday, Wednesday, Friday)
@@ -33,59 +32,34 @@ The `create_program` service allows users to create new watering programs on the
   - `total_duration`: Total time split equally across all valves (HH:MM:SS format)
 
 ## Optional Fields
-- **enabled** (boolean): Enable/disable the program (default: true)
 - **rain_skip_enabled** (boolean): Enable rain skip feature (default: true)
 - **color** (RGB color): Program color in Home Assistant UI
 - **run_X_run_concurrently** (boolean): Run all valves simultaneously vs sequentially
 - **run_X_cycle_and_soak** (boolean): Enable cycle and soak feature
+
+**Note:** The `enabled` field is not supported by the createProgramV2 API. Programs are automatically enabled when created. Use the `enable_program` or `disable_program` services to control them after creation.
 
 ## Example: Minimal Create Program
 
 ```yaml
 service: rachio_local.create_program
 data:
-  device_id: "abc123def456"
   name: "Summer Evening Watering"
   
   # When active
-  start_on_year: 2024
-  start_on_month: 5
-  start_on_day: 1
-  end_on_year: 2024
-  end_on_month: 9
-  end_on_day: 30
-  
-  # Schedule: Monday, Wednesday, Friday
-  days_of_week:
-    - monday
-    - wednesday
-    - friday
-  
-  # One run at 6:00 PM
-  run_1_start_time: "18:00"
-  
-  # Water two zones for 10 minutes each
-  valves:
-    - switch.zone_1
-    - switch.zone_2
-  total_duration: "00:20:00"
-```
+  start_on_date: "2024-05-01"
+  end_on_date: "2024-09-30"
 
 ## Example: Multiple Runs with Individual Durations
 
 ```yaml
 service: rachio_local.create_program
 data:
-  device_id: "abc123def456"
   name: "Two-Phase Morning Watering"
   
-  # When active
-  start_on_year: 2024
-  start_on_month: 3
-  start_on_day: 15
-  end_on_year: 2024
-  end_on_month: 10
-  end_on_day: 31
+  # When active (date pickers)
+  start_on_date: "2024-03-15"
+  end_on_date: "2024-10-31"
   
   # Schedule: Every 2 days
   interval_days: 2
@@ -177,9 +151,9 @@ data:
 
 | Feature | create_program | update_program |
 |---------|---------------|---------------|
-| Program Identifier | `device_id` (text) | `program_id` (entity selector) |
+| Program Identifier | N/A (device inferred from valves) | `program_id` (entity selector for program sensors) |
 | Name Field | Required | Optional |
-| Date Fields | Required | Optional |
+| Date Fields | Required (date pickers) | Not supported by API |
 | Schedule Type | Required | Optional |
 | Run Configuration | Required | Optional |
 | API Method | POST | PUT |

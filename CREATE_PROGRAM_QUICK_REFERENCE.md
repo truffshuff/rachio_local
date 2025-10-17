@@ -3,12 +3,11 @@
 ## What You MUST Provide
 
 ### 1. Basic Info
-- ✅ `device_id` - Your Smart Hose Timer device ID
 - ✅ `name` - A name for your program
 
 ### 2. Season Dates
-- ✅ `start_on_year`, `start_on_month`, `start_on_day` - When program becomes active
-- ✅ `end_on_year`, `end_on_month`, `end_on_day` - When program ends
+- ✅ `start_on_date` - When program becomes active (date picker: YYYY-MM-DD)
+- ✅ `end_on_date` - When program ends (date picker: YYYY-MM-DD)
 
 ### 3. Schedule (Pick ONE)
 - ✅ `days_of_week` - Run on specific days (e.g., Mon, Wed, Fri)
@@ -27,11 +26,12 @@
 ## What's Optional
 
 You can change these later with `update_program`:
-- ❌ `enabled` (default: true)
-- ❌ `rain_skip_enabled` (default: true)
-- ❌ `color` (default: #00A7E1)
+- ❌ `rain_skip_enabled` (default: true - enabled by default)
+- ❌ `color` (default: Rachio blue)
 - ❌ `run_X_run_concurrently` (default: false)
 - ❌ `run_X_cycle_and_soak` (default: false)
+
+**Note:** Programs are automatically enabled when created. Use `rachio_local.enable_program` or `rachio_local.disable_program` to control them after creation.
 
 ## Simplest Possible Example
 
@@ -39,16 +39,11 @@ You can change these later with `update_program`:
 service: rachio_local.create_program
 data:
   # 1. Basic
-  device_id: "abc123"
   name: "Simple Program"
   
   # 2. Dates (May 1 - Sept 30, 2024)
-  start_on_year: 2024
-  start_on_month: 5
-  start_on_day: 1
-  end_on_year: 2024
-  end_on_month: 9
-  end_on_day: 30
+  start_on_date: "2024-05-01"
+  end_on_date: "2024-09-30"
   
   # 3. Schedule (Every Monday, Wednesday, Friday)
   days_of_week:
