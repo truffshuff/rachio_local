@@ -64,6 +64,9 @@ disable_program:
 create_program:
   name: Create Program
   description: "Create a new Smart Hose Timer program. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
+  target:
+    device:
+      integration: rachio_local
   fields:
     name:
       name: Name (required)
@@ -76,7 +79,7 @@ create_program:
       name: Rain Skip Enabled
       description: Enable or disable rain skip for this program
       required: false
-      default: true
+      default: false
       selector:
         boolean:
     color:
@@ -92,7 +95,6 @@ create_program:
       name: Start Date
       description: "Date when the program schedule becomes active (required)"
       required: false
-      collapsed: false
       example: "2024-03-15"
       selector:
         date:
@@ -100,7 +102,6 @@ create_program:
       name: End Date
       description: "Date when the program schedule ends (optional - if provided, creates a seasonal program; if omitted, creates an annual recurring program)"
       required: false
-      collapsed: true
       example: "2024-10-31"
       selector:
         date:
@@ -119,7 +120,6 @@ create_program:
       name: Valves (required)
       description: "Select one or more valves/zones to water (used by all runs)"
       required: false
-      collapsed: false
       selector:
         entity:
           integration: rachio_local
@@ -168,14 +168,12 @@ create_program:
       description: "First run: Set a fixed start time (Start Time OR Sun Event is required for each run)"
       required: false
       example: "06:00"
-      collapsed: false
       selector:
         time:
     run_1_sun_event:
       name: Run 1 - Sun Event
       description: "First run: OR use sun-based timing instead of fixed time (Start Time OR Sun Event is required)"
       required: false
-      collapsed: false
       selector:
         select:
           options:
@@ -192,7 +190,6 @@ create_program:
       description: "Offset in minutes for sun event (optional - only use with sun event above)"
       required: false
       default: 0
-      collapsed: true
       selector:
         number:
           min: -120
@@ -205,7 +202,6 @@ create_program:
       description: "Run all valves at the same time instead of sequentially"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     run_1_cycle_and_soak:
@@ -213,7 +209,6 @@ create_program:
       description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     
@@ -223,14 +218,12 @@ create_program:
       description: "Second run: Set a fixed start time (Start Time OR Sun Event required - leave empty to skip this run)"
       required: false
       example: "18:00"
-      collapsed: true
       selector:
         time:
     run_2_sun_event:
       name: Run 2 - Sun Event
       description: "Second run: OR use sun-based timing instead of fixed time"
       required: false
-      collapsed: true
       selector:
         select:
           options:
@@ -247,7 +240,6 @@ create_program:
       description: "Offset in minutes for sun event (optional - only use with sun event above)"
       required: false
       default: 0
-      collapsed: true
       selector:
         number:
           min: -120
@@ -260,7 +252,6 @@ create_program:
       description: "Run all valves at the same time instead of sequentially"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     run_2_cycle_and_soak:
@@ -268,7 +259,6 @@ create_program:
       description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     
@@ -278,14 +268,12 @@ create_program:
       description: "Third run: Set a fixed start time (Start Time OR Sun Event required - leave empty to skip this run)"
       required: false
       example: "12:00"
-      collapsed: true
       selector:
         time:
     run_3_sun_event:
       name: Run 3 - Sun Event
       description: "Third run: OR use sun-based timing instead of fixed time"
       required: false
-      collapsed: true
       selector:
         select:
           options:
@@ -302,7 +290,6 @@ create_program:
       description: "Offset in minutes for sun event (optional - only use with sun event above)"
       required: false
       default: 0
-      collapsed: true
       selector:
         number:
           min: -120
@@ -315,7 +302,6 @@ create_program:
       description: "Run all valves at the same time instead of sequentially"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     run_3_cycle_and_soak:
@@ -323,7 +309,6 @@ create_program:
       description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     
@@ -331,7 +316,6 @@ create_program:
       name: Days of Week (required - choose this OR Interval Days)
       description: "Select days when program should run (for weekly schedules). REQUIRED: Must specify either Days of Week OR Interval Days."
       required: false
-      collapsed: false
       example: ["monday", "wednesday", "friday"]
       selector:
         select:
@@ -355,7 +339,6 @@ create_program:
       name: Interval Days (required - choose this OR Days of Week)
       description: "Number of days between runs (for interval-based schedules). REQUIRED: Must specify either Days of Week OR Interval Days."
       required: false
-      collapsed: false
       example: 3
       selector:
         number:
@@ -368,6 +351,9 @@ create_program:
 update_program:
   name: Update Program
   description: "Update a Smart Hose Timer program's settings. Only include the fields you want to change. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
+  target:
+    device:
+      integration: rachio_local
   fields:
     program_id:
       name: Program
@@ -589,7 +575,6 @@ update_program:
       description: "Offset in minutes for sun event (optional - only use with sun event above)"
       required: false
       default: 0
-      collapsed: true
       selector:
         number:
           min: -120
@@ -602,7 +587,6 @@ update_program:
       description: "Run all valves at the same time instead of sequentially"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     run_3_cycle_and_soak:
@@ -610,7 +594,6 @@ update_program:
       description: "Enable cycle and soak (breaks watering into smaller cycles with soak time between)"
       required: false
       default: false
-      collapsed: true
       selector:
         boolean:
     
