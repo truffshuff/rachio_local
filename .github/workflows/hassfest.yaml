@@ -2,55 +2,13 @@ name: Validate with hassfest
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
+  schedule:
+    - cron: "0 0 * * *"
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-
+  validate:
+    runs-on: "ubuntu-latest"
     steps:
-      # 1️⃣ Checkout your repo
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # 2️⃣ Set up Python
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.12"
-
-      # 3️⃣ Upgrade pip
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      # 4️⃣ Install Home Assistant Core dependencies
-      - name: Install Home Assistant Core
-        run: |
-          git clone https://github.com/home-assistant/core.git home-assistant-core
-          cd home-assistant-core
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements_all.txt
-          python -m pip install -e .
-          cd ..
-
-      # 5️⃣ Install test dependencies for your custom component
-      - name: Install test dependencies
-        run: python -m pip install pytest pytest-asyncio
-
-      # 6️⃣ Run hassfest to validate your integration
-      - name: Run hassfest
-        run: |
-          cd home-assistant-core
-          python -m homeassistant.hassfest ../
-          cd ..
-
-      # 7️⃣ Run tests
-      - name: Run pytest
-        run: pytest
+      - uses: "actions/checkout@v3"
+      - uses: home-assistant/actions/hassfest@master
