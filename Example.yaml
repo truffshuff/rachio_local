@@ -133,3 +133,64 @@ views:
                 entity: switch.rachio_rose_drip_watering
                 name: Rose Drip
                 icon: mdi:flower-tulip
+
+# Example automation to automatically disable programs during winter
+automation:
+  - alias: "Disable winter watering programs"
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    condition:
+      - condition: template
+        value_template: "{{ now().month in [11, 12, 1, 2] }}"  # Nov-Feb
+    action:
+      - service: rachio_local.disable_program
+        data:
+          program_id: sensor.smart_hose_timer_program_morning_watering
+      - service: rachio_local.disable_program
+        data:
+          program_id: sensor.smart_hose_timer_program_evening_watering
+
+  - alias: "Enable spring watering programs"
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    condition:
+      - condition: template
+        value_template: "{{ now().month == 3 and now().day == 1 }}"  # March 1st
+    action:
+      - service: rachio_local.enable_program
+        data:
+          program_id: sensor.smart_hose_timer_program_morning_watering
+      - service: rachio_local.enable_program
+        data:
+          program_id: sensor.smart_hose_timer_program_evening_watering
+
+  - alias: "Update program for hot weather"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.outdoor_temperature
+        above: 95
+    action:
+      - service: rachio_local.update_program
+        data:
+          program_id: sensor.smart_hose_timer_program_morning_watering
+          rain_skip_enabled: false  # Don't skip during heat wave
+
+# Example button card for program control
+type: vertical-stack
+cards:
+  - type: markdown
+    content: "## Smart Hose Timer Programs"
+  - type: entities
+    entities:
+      - entity: sensor.smart_hose_timer_program_morning_watering
+        type: custom:button-card
+        tap_action:
+          action: call-service
+          service: rachio_local.update_program
+          service_data:
+            program_id: sensor.smart_hose_timer_program_morning_watering
+            enabled: "{{ not is_state('sensor.smart_hose_timer_program_morning_watering', 'disabled') }}"
+        name: Toggle Morning Program
+

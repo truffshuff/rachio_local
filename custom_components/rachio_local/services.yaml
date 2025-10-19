@@ -44,6 +44,7 @@ enable_program:
         entity:
           integration: rachio_local
           domain: sensor
+          device_class: enum
           multiple: false
 
 disable_program:
@@ -59,6 +60,7 @@ disable_program:
         entity:
           integration: rachio_local
           domain: sensor
+          device_class: enum
           multiple: false
 
 create_program:
@@ -364,6 +366,7 @@ update_program:
         entity:
           integration: rachio_local
           domain: sensor
+          device_class: enum
           multiple: false
     enabled:
       name: Enabled
