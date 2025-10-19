@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from homeassistant.helpers.update_coordinator import CoordinatorEntity # Move this above SensorEntity to try and get unique IDs working.
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -14,7 +16,7 @@ from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -784,6 +786,10 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         self._attr_name = f"Program: {program_name}"
         self._attr_unique_id = f"{handler.device_id}_program_{self.program_id}"
         self._attr_icon = "mdi:calendar-clock"
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = ["scheduled", "running", "skipped", "disabled", "unavailable"]
+
+        _LOGGER.debug("ProgramSensor unique_id = %s", self._attr_unique_id)
 
     @property
     def available(self) -> bool:

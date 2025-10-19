@@ -517,15 +517,22 @@ class RachioSmartHoseTimerHandler:
                 # During first update (startup), check for program entities that exist but aren't in schedules
                 # This handles disabled programs that have entities from a previous session
                 if not self._first_update_complete and self.hass:
+                    programs_to_remove_at_startup = []
                     try:
                         registry = er.async_get(self.hass)
                         # Find all program sensor entities for this device
-                        for entry in registry.entities.values():
+                        for entry in list(registry.entities.values()):
                             if entry.domain == "sensor" and entry.platform == DOMAIN:
                                 # Check if this is a program sensor for our device
                                 if entry.unique_id and entry.unique_id.startswith(f"{self.device_id}_program_"):
                                     # Extract program_id from unique_id
                                     program_id = entry.unique_id.replace(f"{self.device_id}_program_", "")
+
+                                    # If program is already marked as deleted, schedule it for removal
+                                    if program_id in self._deleted_programs:
+                                        programs_to_remove_at_startup.append(program_id)
+                                        _LOGGER.info(f"Found entity for already-deleted program {program_id} - will remove")
+                                        continue
 
                                     # Check if this program is already in our schedules
                                     program_exists = any(p.get("id") == program_id for p in self.schedules)
@@ -582,11 +589,17 @@ class RachioSmartHoseTimerHandler:
 
                                             _LOGGER.info(f"Added disabled program '{prog.get('name')}' ({program_id[:8]}...) to schedules from entity registry")
                                         elif details is None:
-                                            # Program was deleted - mark it
+                                            # Program was deleted - mark it and schedule for removal
                                             self._deleted_programs.add(program_id)
-                                            _LOGGER.info(f"Program {program_id} from entity registry appears to be deleted")
+                                            programs_to_remove_at_startup.append(program_id)
+                                            _LOGGER.info(f"Program {program_id} from entity registry appears to be deleted - will remove entities")
                     except Exception as e:
                         _LOGGER.warning(f"Error checking entity registry for missing programs: {e}")
+                    
+                    # Remove entities for deleted programs found during startup
+                    if programs_to_remove_at_startup:
+                        await self._remove_program_entities(programs_to_remove_at_startup)
+                        _LOGGER.info(f"Removed {len(programs_to_remove_at_startup)} deleted program entities during startup")
 
                 if self.schedules:
                     # Commented out to reduce log noise (called on every update)
