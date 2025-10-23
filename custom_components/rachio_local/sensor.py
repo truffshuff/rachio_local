@@ -5,15 +5,18 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from homeassistant.helpers.update_coordinator import CoordinatorEntity # Move this above SensorEntity to try and get unique IDs working.
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -33,6 +36,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the Rachio sensors from config entry."""
     entities = []
     entry_data = hass.data[DOMAIN][config_entry.entry_id]["devices"]
+
+    # Store the async_add_entities callback for dynamic entity creation
+    if "sensor_add_entities" not in hass.data[DOMAIN][config_entry.entry_id]:
+        hass.data[DOMAIN][config_entry.entry_id]["sensor_add_entities"] = async_add_entities
 
     for device_id, data in entry_data.items():
         handler = data["handler"]
@@ -69,7 +76,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entities.append(RachioAPICallSensor(coordinator, handler))
             entities.append(RachioPollingStatusSensor(coordinator, handler))
             _LOGGER.debug(f"Added base station sensors for {handler.name}")
-            
+
             for valve in handler.zones:
                 entities.extend([
                     RachioValveStatusSensor(coordinator, handler, valve),
@@ -82,9 +89,20 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 _LOGGER.debug(f"Added valve sensors for {valve.get('name', valve.get('id'))}")
 
             # Add program sensors for Smart Hose Timers
+            # Track which programs we've created sensors for
+            if not hasattr(handler, '_program_sensor_ids'):
+                handler._program_sensor_ids = set()
+
             for program in handler.schedules:
-                entities.append(RachioSmartHoseTimerProgramSensor(coordinator, handler, program))
-                _LOGGER.debug(f"Added program sensor for {program.get('name', program.get('id'))}")
+                program_id = program.get("id")
+                if program_id:
+                    handler._program_sensor_ids.add(program_id)
+                    entities.append(RachioSmartHoseTimerProgramSensor(coordinator, handler, program))
+                    _LOGGER.debug(f"Added program sensor for {program.get('name', program.get('id'))}")
+
+            # Set up listener for coordinator updates to detect new programs
+            handler._sensor_add_entities_callback = async_add_entities
+
     _LOGGER.info(f"Adding {len(entities)} Rachio sensor entities: {[e.name for e in entities]}")
     async_add_entities(entities)
 
@@ -190,7 +208,8 @@ class RachioZoneStatusSensor(RachioBaseEntity, SensorEntity):
     def native_value(self):
         """Return the state of the sensor (optimistic or real)."""
         is_on = self.handler.is_zone_optimistically_on(self.zone_id)
-        _LOGGER.debug(f"[ZoneStatusSensor] native_value: zone_id={self.zone_id}, is_on={is_on}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        # _LOGGER.debug(f"[ZoneStatusSensor] native_value: zone_id={self.zone_id}, is_on={is_on}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
         return STATE_WATERING if is_on else STATE_NOT_WATERING
 
 class RachioZoneLastWateredSensor(RachioBaseEntity, SensorEntity):
@@ -317,6 +336,7 @@ class RachioValveConnectionSensor(RachioBaseEntity, SensorEntity):
                 desired_state = valve.get("state", {}).get("desiredState", {})
 
                 return {
+                    "valve_id": valve.get("id"),
                     "connection_id": valve.get("connectionId"),
                     "color": valve.get("color"),
                     "detect_flow": valve.get("detectFlow"),
@@ -456,26 +476,26 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
     """Sensor showing API call count and rate limit info."""
     def __init__(self, coordinator, handler):
         super().__init__(coordinator, handler)
-        self._attr_name = f"{handler.name} API Calls"
-        self._attr_unique_id = f"{handler.device_id}_api_calls"
+        self._attr_name = f"{handler.name} API Calls Remaining"
+        self._attr_unique_id = f"{handler.device_id}_api_calls_remaining"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_state_class = SensorStateClass.TOTAL
 
     @property
     def native_value(self):
-        # Show API calls used in current window: rate_limit - rate_remaining
+        # Show API calls remaining in current window
         try:
-            _LOGGER.debug(f"[APICallSensor] raw values: limit={self.handler.api_rate_limit}, remaining={self.handler.api_rate_remaining}, reset={self.handler.api_rate_reset}")
+            # Verbose debug - commented out to reduce log noise (property called frequently)
+            # _LOGGER.debug(f"[APICallSensor] raw values: limit={self.handler.api_rate_limit}, remaining={self.handler.api_rate_remaining}, reset={self.handler.api_rate_reset}")
 
             if self.handler.api_rate_limit is None or self.handler.api_rate_remaining is None:
-                _LOGGER.debug(f"[APICallSensor] Missing rate limit headers")
+                # _LOGGER.debug(f"[APICallSensor] Missing rate limit headers")
                 return None
 
-            limit = int(self.handler.api_rate_limit)
             remaining = int(self.handler.api_rate_remaining)
-            used = limit - remaining
 
-            _LOGGER.debug(f"[APICallSensor] calculated: limit={limit}, remaining={remaining}, used={used}")
-            return used
+            # _LOGGER.debug(f"[APICallSensor] calculated: remaining={remaining}")
+            return remaining
         except (ValueError, TypeError) as e:
             _LOGGER.error(f"[APICallSensor] Error calculating value: {e}")
             return None
@@ -497,7 +517,19 @@ class RachioAPICallSensor(RachioBaseEntity, SensorEntity):
                 reset_local = reset_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             except Exception:
                 reset_local = reset_utc
+
+        # Calculate calls used so far
+        calls_used = None
+        try:
+            if self.handler.api_rate_limit is not None and self.handler.api_rate_remaining is not None:
+                limit = int(self.handler.api_rate_limit)
+                remaining = int(self.handler.api_rate_remaining)
+                calls_used = limit - remaining
+        except (ValueError, TypeError):
+            pass
+
         return {
+            "calls_used": calls_used,
             "rate_limit": self.handler.api_rate_limit,
             "rate_remaining": self.handler.api_rate_remaining,
             "rate_reset": reset_local,
@@ -754,6 +786,39 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
         self._attr_name = f"Program: {program_name}"
         self._attr_unique_id = f"{handler.device_id}_program_{self.program_id}"
         self._attr_icon = "mdi:calendar-clock"
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = ["scheduled", "running", "skipped", "disabled", "unavailable"]
+
+        _LOGGER.debug("ProgramSensor unique_id = %s", self._attr_unique_id)
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available (program still exists)."""
+        # Program is unavailable only if it's been confirmed as deleted
+        # Disabled programs should still show as available
+        if hasattr(self.handler, '_deleted_programs'):
+            if self.program_id in self.handler._deleted_programs:
+                return False
+
+        # Check if program exists in schedules
+        for schedule in self.handler.schedules:
+            if schedule.get("id") == self.program_id:
+                return True
+
+        # Check if program exists in cache (handles disabled programs during startup)
+        # This prevents entities from becoming unavailable during HA restart
+        # before the first coordinator update completes
+        if hasattr(self.handler, '_program_details'):
+            if self.program_id in self.handler._program_details:
+                return True
+
+        # During initial startup, give benefit of the doubt
+        # The entity will be marked unavailable later if program is truly deleted
+        if hasattr(self.handler, '_first_update_complete'):
+            if not self.handler._first_update_complete:
+                return True
+
+        return False
 
     @property
     def native_value(self):
@@ -767,22 +832,96 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
 
         if not current_program:
             return "unavailable"
-
-        # Check if program is enabled
-        enabled = current_program.get("enabled", False)
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)       
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: unavailable (no current_program)")
+            return "unavailable"
+        # Check if program is enabled (from getProgramV2 API)
+        enabled = current_program.get("enabled", True)
         if not enabled:
             return "disabled"
-
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: disabled")
+            return "disabled"
         # Check if program is currently active (running)
         active = current_program.get("active", False)
         if active:
             return "running"
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: running")
+            return "running"
+        # Check if next run has been manually skipped
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+            if summaries.get("next_run") and summaries["next_run"].get("manual_skip"):
+                return "skipped"
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: skipped (manual_skip)")
+                return "skipped"
+        # New: Check if there is a next run within the summary end days window
+        # Only applies if enabled and not running/skipped
+        # Use the same logic as the handler uses for summary_end_days
+        summary_end_days = None
+        if hasattr(self.handler, 'get_summary_end_days'):
+            summary_end_days = self.handler.get_summary_end_days()
+        elif hasattr(self.handler, 'summary_end_days'):
+            summary_end_days = self.handler.summary_end_days
+        if summary_end_days is None:
+            summary_end_days = 7  # fallback default
 
+
+        # Improved logic: Only set 'not on schedule' if there is NO next_run at all, or next_run is outside window
+        next_run = None
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+            next_run = summaries.get("next_run")
+
+        next_run_within_window = False
+        next_run_time = None
+        if next_run and next_run.get("start"):
+            try:
+                from datetime import datetime, timezone, timedelta
+                start_val = next_run["start"]
+                if isinstance(start_val, datetime):
+                    next_run_time = start_val
+                elif isinstance(start_val, str):
+                    # Handle both Z and +00:00 endings
+                    if start_val.endswith("Z"):
+                        next_run_time = datetime.fromisoformat(start_val.replace("Z", "+00:00"))
+                    else:
+                        next_run_time = datetime.fromisoformat(start_val)
+                else:
+                    raise ValueError(f"Unexpected type for next_run['start']: {type(start_val)}")
+                now = datetime.now(timezone.utc)
+                window_end = now + timedelta(days=summary_end_days)
+                if now <= next_run_time <= window_end:
+                    next_run_within_window = True
+            except Exception as e:
+                _LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: Error parsing next_run time: {e}")
+
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        #_LOGGER.debug(
+        #    f"[ProgramSensor] program_id={self.program_id}, enabled={enabled}, summary_end_days={summary_end_days}, "
+        #    f"next_run_start={next_run.get('start') if next_run else None}, next_run_time={next_run_time}, "
+        #    f"next_run_within_window={next_run_within_window}"
+        #)
+
+        if enabled:
+            if not next_run or not next_run.get("start"):
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (no next_run)")
+                return "not on schedule"
+            if not next_run_within_window:
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: not on schedule (next_run not within window)")
+                return "not on schedule"
+
+        # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+        #_LOGGER.debug(f"[ProgramSensor] program_id={self.program_id}: State decision: scheduled")
         return "scheduled"
 
     @property
     def extra_state_attributes(self):
-        """Return program details as attributes."""
+        """Return program details as attributes including run history."""
         # Find the current program data from handler.schedules
         current_program = None
         for schedule in self.handler.schedules:
@@ -791,7 +930,11 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                 break
 
         if not current_program:
+            _LOGGER.debug(f"Program {self.program_id}: No program data found in handler.schedules")
             return {}
+
+        # Log the keys available in the program data for debugging
+        _LOGGER.debug(f"Program {self.program_id} ({current_program.get('name')}): Available keys: {list(current_program.keys())}")
 
         attributes = {
             "program_id": self.program_id,
@@ -800,8 +943,16 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             "active": current_program.get("active", False),
         }
 
-        # Add valve information
+        # Add color if available
+        if "color" in current_program:
+            attributes["color"] = current_program["color"]
+
+        # Add valve information from both valveIds and assignments
         valve_ids = current_program.get("valveIds", [])
+        if not valve_ids and "assignments" in current_program:
+            # Fall back to assignments if valveIds not present
+            valve_ids = [assignment.get("entityId") for assignment in current_program["assignments"] if "entityId" in assignment]
+
         if valve_ids:
             valve_names = []
             for valve_id in valve_ids:
@@ -810,12 +961,17 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
                         valve_names.append(valve.get("name", "Unknown"))
                         break
             attributes["valve_names"] = ", ".join(valve_names) if valve_names else "Unknown"
-            attributes["valve_ids"] = valve_ids
+            attributes["valve_ids"] = ", ".join(valve_ids) if isinstance(valve_ids, list) else valve_ids
 
-        # Add schedule information
-        if "schedule" in current_program:
+        # Add schedule information (only if schedule data exists and has content)
+        if "schedule" in current_program and current_program["schedule"]:
             schedule = current_program["schedule"]
-            attributes["schedule_type"] = schedule.get("type", "Unknown")
+            _LOGGER.debug(f"Program {self.program_id}: schedule object exists, keys={list(schedule.keys())}")
+
+            # Only add schedule_type if it has a value
+            if schedule.get("type"):
+                attributes["schedule_type"] = schedule["type"]
+                _LOGGER.debug(f"Program {self.program_id}: Set schedule_type from schedule.type = {schedule['type']}")
 
             # Add start times
             if "startTimes" in schedule:
@@ -846,10 +1002,149 @@ class RachioSmartHoseTimerProgramSensor(RachioBaseEntity, SensorEntity):
             attributes["duration_minutes"] = minutes
             attributes["duration_seconds"] = duration_seconds
 
-        # Add creation/update timestamps
-        if "createdAt" in current_program:
+        # Add creation/update timestamps (only if they have values)
+        if current_program.get("createdAt"):
             attributes["created_at"] = current_program["createdAt"]
-        if "updatedAt" in current_program:
+        if current_program.get("updatedAt"):
             attributes["updated_at"] = current_program["updatedAt"]
+
+        # Add program schedule details from getProgramV2
+        if "startOn" in current_program:
+            start_on = current_program["startOn"]
+            attributes["start_on"] = f"{start_on.get('year', '')}-{start_on.get('month', ''):02d}-{start_on.get('day', ''):02d}"
+
+        if "dailyInterval" in current_program:
+            interval = current_program["dailyInterval"]
+            if "intervalDays" in interval:
+                attributes["interval_days"] = interval["intervalDays"]
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: dailyInterval={interval}")
+
+        # Handle days of week scheduling (alternative to dailyInterval)
+        if "daysOfWeek" in current_program:
+            days_of_week_obj = current_program["daysOfWeek"]
+            if isinstance(days_of_week_obj, dict) and "daysOfWeek" in days_of_week_obj:
+                days_list = days_of_week_obj["daysOfWeek"]
+                if days_list:
+                    # Convert day names to title case for better readability
+                    formatted_days = [day.title() for day in days_list]
+                    attributes["days_of_week"] = ", ".join(formatted_days)
+                    # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                    #_LOGGER.debug(f"Program {self.program_id}: daysOfWeek={formatted_days}")
+
+        # Handle even/odd days scheduling (alternative to dailyInterval)
+        if "evenDays" in current_program:
+            attributes["schedule_type"] = "Even Days"
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: Schedule type is Even Days")
+        elif "oddDays" in current_program:
+            attributes["schedule_type"] = "Odd Days"
+            # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+            #_LOGGER.debug(f"Program {self.program_id}: Schedule type is Odd Days")
+
+
+        if "plannedRuns" in current_program and current_program["plannedRuns"]:
+            _LOGGER.debug(f"Program {self.program_id}: plannedRuns present with {len(current_program['plannedRuns'])} run(s)")
+            planned_run = current_program["plannedRuns"][0]  # Get first planned run
+            # Check for sun event start time
+            if "sunStart" in planned_run:
+                sun_start = planned_run["sunStart"]
+                sun_event = sun_start.get("sunEvent", "")
+                offset_seconds = int(sun_start.get("offsetSeconds", 0))
+
+                if sun_event == "BEFORE_RISE":
+                    attributes["start_time_type"] = "Before Sunrise"
+                elif sun_event == "AFTER_RISE":
+                    attributes["start_time_type"] = "After Sunrise"
+                elif sun_event == "BEFORE_SET":
+                    attributes["start_time_type"] = "Before Sunset"
+                elif sun_event == "AFTER_SET":
+                    attributes["start_time_type"] = "After Sunset"
+                else:
+                    attributes["start_time_type"] = sun_event
+
+                if offset_seconds != 0:
+                    offset_minutes = offset_seconds // 60
+                    attributes["start_time_offset_minutes"] = offset_minutes
+
+            # Check for fixed start time
+            elif "fixedStart" in planned_run:
+                fixed_start = planned_run["fixedStart"]
+                if "startAt" in fixed_start:
+                    start_at = fixed_start["startAt"]
+                    hour = start_at.get("hour", 0)
+                    minute = start_at.get("minute", 0)
+                    attributes["start_time_type"] = "Fixed Time"
+                    attributes["start_time"] = f"{hour:02d}:{minute:02d}"
+
+            # Entity runs information
+            if "entityRuns" in planned_run:
+                entity_runs = planned_run["entityRuns"]
+                total_duration = sum(int(run.get("durationSec", 0)) for run in entity_runs)
+                attributes["total_duration_seconds"] = total_duration
+                attributes["total_duration_minutes"] = total_duration // 60
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: entityRuns count={len(entity_runs)}, total_duration={total_duration}s")
+
+            # Run concurrently and cycle & soak
+            if "runConcurrently" in planned_run:
+                attributes["run_concurrently"] = planned_run["runConcurrently"]
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: runConcurrently={planned_run['runConcurrently']}")
+            if "cycleAndSoak" in planned_run:
+                attributes["cycle_and_soak"] = planned_run["cycleAndSoak"]
+                # Verbose debug - commented out to reduce log noise (property called frequently on every state update)
+                #_LOGGER.debug(f"Program {self.program_id}: cycleAndSoak={planned_run['cycleAndSoak']}")
+        else:
+            _LOGGER.debug(f"Program {self.program_id}: No plannedRuns in current_program")
+
+        # Rain skip enabled
+        if "rainSkipEnabled" in current_program:
+            attributes["rain_skip_enabled"] = current_program["rainSkipEnabled"]
+
+        # Notification settings
+        if "settings" in current_program:
+            settings = current_program["settings"]
+            attributes["start_notifications"] = settings.get("startOnNotificationsEnabled", False)
+            attributes["end_notifications"] = settings.get("endOnNotificationsEnabled", False)
+
+        # Add run summary information if available
+        if hasattr(self.handler, 'program_run_summaries') and self.program_id in self.handler.program_run_summaries:
+            summaries = self.handler.program_run_summaries[self.program_id]
+
+            # Add previous run information
+            if summaries.get("previous_run"):
+                prev = summaries["previous_run"]
+                attributes["previous_run_start"] = prev["start_str"]
+                attributes["previous_run_duration_seconds"] = prev["duration_seconds"]
+                attributes["previous_run_duration_minutes"] = prev["duration_seconds"] // 60
+                attributes["previous_run_skipped"] = prev.get("skipped", False)
+                attributes["previous_run_skippable"] = prev.get("skippable", False)
+
+                # Add precipitation information if available
+                if prev.get("predicted_precip_mm") is not None:
+                    attributes["previous_run_predicted_precip_mm"] = prev["predicted_precip_mm"]
+                if prev.get("observed_precip_mm") is not None:
+                    attributes["previous_run_observed_precip_mm"] = prev["observed_precip_mm"]
+
+            # Add next run information
+            if summaries.get("next_run"):
+                next_run = summaries["next_run"]
+                attributes["next_run_start"] = next_run["start_str"]
+                attributes["next_run_duration_seconds"] = next_run["duration_seconds"]
+                attributes["next_run_duration_minutes"] = next_run["duration_seconds"] // 60
+                attributes["next_run_skippable"] = next_run.get("skippable", False)
+
+                # Add manual skip status if present
+                if next_run.get("manual_skip"):
+                    attributes["next_run_skipped"] = True
+
+        # # Debug: Log final attributes to verify schedule_type is included
+        # if "evenDays" in current_program or "oddDays" in current_program:
+        #     _LOGGER.debug(f"Program {self.program_id}: Final attributes keys: {list(attributes.keys())}")
+        #     if "schedule_type" in attributes:
+        #         _LOGGER.debug(f"Program {self.program_id}: schedule_type = {attributes['schedule_type']}")
+        #     else:
+        #         _LOGGER.warning(f"Program {self.program_id}: schedule_type NOT in final attributes!")
 
         return attributes

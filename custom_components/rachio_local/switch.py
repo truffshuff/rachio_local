@@ -141,20 +141,22 @@ class RachioZoneSwitch(RachioSwitch):
         super().__init__(coordinator, handler)
         self.zone_id = zone["id"]
         self.zone_name = zone.get("name", f"Zone {zone.get('zoneNumber', '')}")
-        self._attr_name = f"{self.zone_name} Zone"
+        self._attr_name = f"Zone: {self.zone_name}"
         self._attr_unique_id = f"{handler.device_id}_{self.zone_id}_zone"
 
     @property
     def is_on(self):
         # Use handler's shared optimistic state logic
         state = self.handler.is_zone_optimistically_on(self.zone_id)
-        _LOGGER.debug(f"[ZoneSwitch] is_on check: zone_id={self.zone_id}, is_on={state}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
+        # Commented out to reduce log noise (property called frequently)
+        # _LOGGER.debug(f"[ZoneSwitch] is_on check: zone_id={self.zone_id}, is_on={state}, running_zones={list(self.handler.running_zones.keys())}, pending_start={getattr(self.handler, '_pending_start', {})}")
         return state
 
     @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         return {
+            "zone_id": self.zone_id,
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
 
@@ -170,7 +172,8 @@ class RachioZoneSwitch(RachioSwitch):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        _LOGGER.debug(f"[ZoneSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Commented out to reduce log noise
+        # _LOGGER.debug(f"[ZoneSwitch] async_turn_off called: zone_id={self.zone_id}")
         # Always call async_stop_zone - it will handle whether the zone is actually running
         # We need to clear optimistic state even if the zone isn't actually running
         await self.handler.async_stop_zone(self.zone_id)
@@ -223,10 +226,43 @@ class RachioValveSwitch(RachioZoneSwitch):
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes."""
-        return {
+        """Return extra state attributes including run history."""
+        attributes = {
+            "valve_id": self.zone_id,
             "default_duration": self.handler.get_zone_default_duration(self.zone_id)
         }
+
+        # Add run summary information if available
+        if hasattr(self.handler, 'valve_run_summaries') and self.zone_id in self.handler.valve_run_summaries:
+            summaries = self.handler.valve_run_summaries[self.zone_id]
+
+            # Add previous run information
+            if summaries.get("previous_run"):
+                prev = summaries["previous_run"]
+                attributes["previous_run_start"] = prev["start_str"]
+                attributes["previous_run_duration_seconds"] = prev["duration_seconds"]
+                attributes["previous_run_duration_minutes"] = prev["duration_seconds"] // 60
+                if prev.get("flow_detected") is not None:
+                    attributes["previous_run_flow_detected"] = prev["flow_detected"]
+                if prev.get("source"):
+                    attributes["previous_run_source"] = prev["source"]
+                if prev.get("program_name"):
+                    attributes["previous_run_program"] = prev["program_name"]
+                if prev.get("skipped"):
+                    attributes["previous_run_skipped"] = prev["skipped"]
+
+            # Add next run information
+            if summaries.get("next_run"):
+                next_run = summaries["next_run"]
+                attributes["next_run_start"] = next_run["start_str"]
+                attributes["next_run_duration_seconds"] = next_run["duration_seconds"]
+                attributes["next_run_duration_minutes"] = next_run["duration_seconds"] // 60
+                if next_run.get("source"):
+                    attributes["next_run_source"] = next_run["source"]
+                if next_run.get("program_name"):
+                    attributes["next_run_program"] = next_run["program_name"]
+
+        return attributes
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
@@ -240,7 +276,8 @@ class RachioValveSwitch(RachioZoneSwitch):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        _LOGGER.debug(f"[ValveSwitch] async_turn_off called: zone_id={self.zone_id}")
+        # Commented out to reduce log noise
+        # _LOGGER.debug(f"[ValveSwitch] async_turn_off called: zone_id={self.zone_id}")
         # Always call async_stop_zone - it will handle whether the valve is actually running
         # We need to clear optimistic state even if the valve isn't actually running
         await self.handler.async_stop_zone(self.zone_id)

@@ -2,6 +2,89 @@
 
 All notable changes to this project will be documented in this file.
 
+## v2.5.0 (2025-10-23) - Major Smart Hose Timer Enhancement Release
+
+### 🎉 Major Contributions by [@truffshuff](https://github.com/truffshuff)
+A huge thank you to **@truffshuff** for this massive PR #20 with comprehensive Smart Hose Timer enhancements, new platforms, and diagnostic features!
+
+### 🆕 New Platforms
+- **Button Platform:** Added refresh buttons for manual data updates
+  - Normal refresh (respects cache)
+  - Full refresh (clears program cache)
+  - Available for both Controllers and Smart Hose Timers
+- **Calendar Platform:** Smart Hose Timer schedule calendar entity
+  - Shows past watering events (up to 180 days retention)
+  - Displays future scheduled programs
+  - Persists historical data across restarts
+  - Skip/manual run annotations
+
+### 🌊 Smart Hose Timer Enhancements
+- **Program Management Services:** New services for complete program control
+  - `rachio_local.create_program` - Create programs with full scheduling options
+  - `rachio_local.update_program` - Update existing programs with intuitive UI
+  - `rachio_local.enable_program` - Enable disabled programs
+  - `rachio_local.disable_program` - Disable programs
+  - `rachio_local.delete_program` - Remove programs
+- **Program Caching:** Intelligent caching with timestamps to reduce API calls
+- **Run History Tracking:** Previous and next run summaries for programs and valves
+- **Dynamic Entity Management:** Automatic creation/removal of program entities
+- **Enhanced Program Sensors:** Rich program details with scheduling information
+- **Valve Day Views Integration:** Uses `getValveDayViews` API for comprehensive schedule data
+
+### 📊 New Diagnostic Sensors
+- **API Rate Limiting:** Track remaining API calls and rate limit status
+- **Polling Status:** Monitor current polling behavior and intervals
+- **Base Station Diagnostics:**
+  - Connection status
+  - BLE firmware version
+  - WiFi firmware version
+  - RSSI (signal strength)
+- **Valve Diagnostics:**
+  - Connection status per valve
+  - Firmware version per valve
+  - RSSI per valve
+  - Battery level per valve
+
+### ⚙️ Configurable Settings (Number Entities)
+- **Idle Polling Interval:** Configure polling frequency when system is idle (default: 300s)
+- **Active Watering Polling Interval:** Configure polling frequency during watering (default: 120s)
+- **Program Details Refresh Interval:** Configure how often to refresh program details (default: 3600s/1 hour)
+- **Summary End Days:** Configure calendar future day range (default: 7 days)
+- All settings persist to config entry options
+
+### 🔧 Controller Improvements
+- **Better Running Zone Detection:** Enhanced `/current_schedule` API usage with multiple fallbacks
+- **Optimistic State Handling:** Configurable optimistic window with automatic cleanup
+- **Safe Polling Calculation:** Helper function to compute safe intervals based on device count
+- **Reduced Log Noise:** Fixed incorrect WARNING log levels, cleaned up verbose logging
+
+### 🎨 User Experience Improvements
+- **Intuitive Service UI:** Time format (HH:MM:SS) instead of seconds
+- **Global Valve Selection:** Select valves once, apply to all runs
+- **Entity Pickers:** Dropdown selectors for easy valve/program selection
+- **Run-Specific Settings:** Per-run concurrent and cycle-and-soak options
+- **Flexible Update Modes:** Full update or valve-only update support
+
+### 🐛 Bug Fixes
+- **Entity Registry Cleanup:** Properly removes entities for deleted programs
+- **State Restoration:** Last watered sensors now restore state on startup
+- **Rate Limit Handling:** Better HTTP 429 detection and backoff
+- **Program Discovery:** Fixed detection of multi-valve programs
+- **Service Registration:** All services now properly documented in services.yaml
+
+### 📚 Documentation
+- Added comprehensive service examples
+- Added quick start guides for program management
+- Added implementation summaries
+- Added user-friendly UI documentation
+
+### 🔒 Code Quality
+- Proper async/await patterns throughout
+- Better error handling and validation
+- Defensive programming with fallbacks
+- Entity registry integration
+- Config entry options migration
+
 ## v2.4.0 (2025-10-09) - Smart Hose Timer Enhancement Release
 
 ### 🎉 Major Contributions by [@truffshuff](https://github.com/truffshuff)
