@@ -67,8 +67,8 @@ create_program:
   name: Create Program
   description: "Create a new Smart Hose Timer program. Note: Only ONE scheduling type can be used (days_of_week OR interval_days)."
   target:
-    device:
-      integration: rachio_local
+    device: {}
+      # integration: rachio_local   #Removed due HASSFest change on 15OCT.  https://developers.home-assistant.io/blog/2025/10/14/device-filter-removed-from-target-selector
   fields:
     name:
       name: Name (required)
